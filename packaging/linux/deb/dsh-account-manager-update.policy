@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>DSH Account Manager</vendor>
+  <action id="io.github.ruoshuixx.dsh-account-manager.update">
+    <description>Install an DSH Account Manager update</description>
+    <description xml:lang="zh_CN">安装 DSH 账号管理的更新</description>
+    <message>Authentication is required to install an DSH Account Manager update</message>
+    <message xml:lang="zh_CN">安装 DSH 账号管理的更新需要管理员授权</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dsh-account-manager/install-update</annotate>
+  </action>
+</policyconfig>

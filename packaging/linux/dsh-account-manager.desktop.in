@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DSH Account Manager
+Comment=Manage DSH accounts
+Exec=@DAM_EXEC@
+Icon=dsh-account-manager
+Terminal=false
+Categories=Utility;
+X-DshAccountManager-Managed=true

@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AccountManager.App.Views.ReferenceGuardDialog"
+        Width="620" Height="600" MinWidth="460" MinHeight="380"
+        WindowStartupLocation="CenterOwner"
+        Icon="avares://DshAccountManager/Assets/app.ico"
+        Title="仍有设置引用">
+  <Grid Margin="22" RowDefinitions="Auto,*,Auto,Auto">
+    <StackPanel Spacing="6" Margin="0,0,0,12">
+      <TextBlock x:Name="HeaderText" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+      <TextBlock x:Name="HintText" Classes="subtitle" TextWrapping="Wrap" />
+    </StackPanel>
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Spacing="6" Margin="0,0,6,6">
+        <TextBlock Text="引用它的设置" FontWeight="SemiBold" />
+        <StackPanel x:Name="ReferenceList" Spacing="4" />
+        <TextBlock x:Name="LockedText" Classes="error" TextWrapping="Wrap" IsVisible="False" />
+      </StackPanel>
+    </ScrollViewer>
+    <StackPanel x:Name="ReplacePanel" Grid.Row="2" Spacing="6" Margin="0,10,0,0">
+      <TextBlock Text="改用（所有可修改的引用都会指向它）" FontWeight="SemiBold" />
+      <Grid ColumnDefinitions="*,12,*">
+        <ComboBox x:Name="ProviderBox" Grid.Column="0" HorizontalAlignment="Stretch" PlaceholderText="供应商" SelectionChanged="OnProviderChanged" />
+        <ComboBox x:Name="ModelBox" Grid.Column="2" HorizontalAlignment="Stretch" PlaceholderText="模型" />
+      </Grid>
+    </StackPanel>
+    <StackPanel Grid.Row="3" Spacing="10" Margin="0,14,0,0">
+      <TextBlock x:Name="ErrorText" Classes="error" TextWrapping="Wrap" />
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button x:Name="ReplaceButton" Classes="primary" Click="OnReplace" />
+        <Button x:Name="RemoveButton" Classes="toolbar danger" Click="OnRemove" />
+        <Button Classes="toolbar" Content="取消" Click="OnCancel" />
+      </StackPanel>
+    </StackPanel>
+  </Grid>
+</Window>
