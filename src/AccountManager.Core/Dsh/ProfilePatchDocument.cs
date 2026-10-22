@@ -9,7 +9,7 @@ namespace AccountManager.Core.Dsh;
 /// text of that mapping entry (located through the parser's character spans) and leaves every other byte of the
 /// file, including other entries and comments, identical; a missing entry is appended and a missing file is created.
 /// </summary>
-public sealed class ProfilePatchDocument
+public sealed partial class ProfilePatchDocument
 {
     public const string PluginId = "llm-pi-ai";
 

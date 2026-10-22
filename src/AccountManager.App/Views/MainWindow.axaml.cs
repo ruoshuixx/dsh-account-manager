@@ -10,8 +10,8 @@ public partial class MainWindow : Window
 {
     // Designed minimum size; the same values as MinWidth/MinHeight in MainWindow.axaml. The live
     // minimum is lowered (together with a content zoom) when the work area cannot show it.
-    private const double DesignMinWidth = 1000;
-    private const double DesignMinHeight = 560;
+    internal const double DesignMinWidth = 860;
+    internal const double DesignMinHeight = 480;
 
     private double _zoom = 1;
 

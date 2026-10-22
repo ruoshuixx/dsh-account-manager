@@ -104,11 +104,13 @@ public sealed class ImportService
     private readonly AppLog _log;
     private readonly SubscriptionStore? _subscriptions;
     private readonly ReferenceService? _references;
+    private readonly SubagentRouteService? _subagents;
 
     public ImportService(IAccountBackend api, BackupService backups, SecretRegistry secrets, AppLog log, SubscriptionStore? subscriptions = null,
-        ReferenceService? references = null)
+        ReferenceService? references = null, SubagentRouteService? subagents = null)
     {
         _references = references;
+        _subagents = subagents;
         _api = api;
         _backups = backups;
         _secrets = secrets;
@@ -515,6 +517,7 @@ public sealed class ImportService
         }
 
         await ApplyRepairsAsync(preview, apiTargets, messages, cancellationToken).ConfigureAwait(false);
+        await MergeSubagentRoutesAsync(preview, credentials, messages, cancellationToken).ConfigureAwait(false);
 
         Report(messages, "完成。失败或需检查：" + failed + "。保存成功不代表令牌/API 已联网验证。", failed > 0 ? LogLevel.Warn : LogLevel.Info);
         return new ImportResult { Backup = backup, Failed = failed, Messages = messages };
@@ -703,6 +706,28 @@ public sealed class ImportService
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { _log.Warn("无法预先规划引用修复：" + _secrets.Redact(ex.Message)); }
+    }
+
+    /// <summary>
+    /// Every import lets dsh's main agent delegate to the providers and models now configured: the candidate routes are
+    /// merged into <c>subagent-model-selection-settings</c> (kept entries stay, no duplicates). The change applies to new
+    /// dsh conversations only, which the result says.
+    /// </summary>
+    private async Task MergeSubagentRoutesAsync(ImportPreview preview, JsonArray credentials, List<string> messages, CancellationToken ct)
+    {
+        if (_subagents is null || preview.SubscriptionOnly) { return; }
+        try
+        {
+            var current = await _api.GetCredentialsAsync(ct).ConfigureAwait(false);
+            var merge = await Task.Run(() => _subagents.Merge(current), ct).ConfigureAwait(false);
+            foreach (var line in SubagentRouteService.Describe(merge)) { Report(messages, line, LogLevel.Info); }
+            if (merge.Note.Length > 0 && !merge.Changed) { _log.Info(merge.Note); }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Report(messages, "未能设置子代理可用模型：" + ex.Message, LogLevel.Warn);
+        }
     }
 
     private async Task ApplyRepairsAsync(ImportPreview preview, Dictionary<ImportRow, ApiTarget> targets, List<string> messages, CancellationToken ct)

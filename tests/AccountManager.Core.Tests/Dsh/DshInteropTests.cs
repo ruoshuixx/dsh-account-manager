@@ -422,4 +422,26 @@ public class DshInteropTests
         // Whatever the shipped layers reference is either known or reported; nothing outside dsh's real routes is silently accepted.
         Assert.All(scan.References.Where(r => !r.Editable), r => Assert.Equal(!scan.KnownProviders.Contains(r.Provider), r.Dangling));
     }
+
+    [Fact]
+    public async Task DshComposesTheSubagentEntryWeWriteAndLeavesItEnabledWithItsRoutes()
+    {
+        if (Prerequisites() is not { } req || FindDshBin() is not { } bin) { return; }
+        using var temp = new TempDir();
+        var root = temp.File("dsh");
+        Directory.CreateDirectory(root);
+        var home = DshHome.Resolve(root, "web", _ => null, temp.Path);
+        var verifier = new DshRuntimeVerifier(() => new DshLauncher(req.Node, new[] { bin }), TimeSpan.FromSeconds(60));
+        Assert.NotNull(await verifier.DumpConfigAsync(home)); // creates the profile
+        File.WriteAllText(home.PatchPath, "- id: llm-pi-ai\n  config:\n    providers:\n      p1:\n        api: openai-completions\n        baseURL: https://p1.example.test/v1\n        models: [{id: m1}]\n");
+
+        ProfilePatchDocument.Update(home.PatchPath, d => d.AddSubagentRoutes(new[] { new SubagentRoute("p1", "m1") }).Changed);
+
+        var dump = await verifier.DumpConfigAsync(home);
+        Assert.NotNull(dump);
+        var entry = dump!.Split("\n- id: ").First(b => b.StartsWith("subagent-model-selection-settings", StringComparison.Ordinal));
+        Assert.Contains("enabled: true", entry);
+        Assert.Contains("provider: p1", entry);
+        Assert.Contains("model: m1", entry);
+    }
 }

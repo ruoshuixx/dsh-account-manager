@@ -17,6 +17,7 @@ public partial class ReferenceRepairDialog : Window
     public ReferenceRepairDialog()
     {
         InitializeComponent();
+        DialogWindowBounds.KeepOnScreen(this);
     }
 
     public IReadOnlyList<RepairChoice>? Result { get; private set; }
@@ -25,6 +26,7 @@ public partial class ReferenceRepairDialog : Window
     {
         var dialog = new ReferenceRepairDialog();
         dialog.Init(input);
+        DialogWindowBounds.Fit(dialog, owner, center: true);
         await dialog.ShowDialog(owner);
         return dialog.Result;
     }
@@ -75,14 +77,14 @@ public partial class ReferenceRepairDialog : Window
         var pick = new ActionItem(RepairKind.Retarget, "改选其他供应商和模型…", IsPick: true);
         items.Add(pick);
 
-        var combo = new ComboBox { ItemsSource = items, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var combo = new ComboBox { ItemsSource = items, HorizontalAlignment = HorizontalAlignment.Stretch }.Trimmed();
         // Auto-suggest only when exactly one provider offers the same model; otherwise a restore if possible, else nothing.
         combo.SelectedItem = sameModel.Count == 1
             ? items.First(i => i.Provider == sameModel[0].ProviderId && !i.IsPick && i.Kind == RepairKind.Retarget)
             : items.FirstOrDefault(i => i.Kind == RepairKind.Restore) ?? items[0];
 
-        var providerBox = new ComboBox { ItemsSource = input.Choices.Select(c => new ProviderItem(c)).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "供应商" };
-        var modelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "模型" };
+        var providerBox = new ComboBox { ItemsSource = input.Choices.Select(c => new ProviderItem(c)).ToList(), HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "供应商" }.Trimmed();
+        var modelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "模型" }.Trimmed();
         providerBox.SelectionChanged += (_, _) =>
         {
             modelBox.ItemsSource = (providerBox.SelectedItem as ProviderItem)?.Choice.Models;
@@ -96,8 +98,8 @@ public partial class ReferenceRepairDialog : Window
         combo.SelectionChanged += (_, _) => pickRow.IsVisible = (combo.SelectedItem as ActionItem)?.IsPick == true;
         pickRow.IsVisible = (combo.SelectedItem as ActionItem)?.IsPick == true;
 
-        var panel = new Border { Classes = { "card" }, Padding = new Avalonia.Thickness(12) };
-        var stack = new StackPanel { Spacing = 8 };
+        var panel = new Border { Classes = { "card" }, Padding = new Avalonia.Thickness(10, 8) };
+        var stack = new StackPanel { Spacing = 4 };
         stack.Children.Add(new TextBlock { Text = reference.Label + " · " + reference.Provider + " / " + reference.Model, FontWeight = Avalonia.Media.FontWeight.SemiBold, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         stack.Children.Add(new TextBlock { Text = reference.IsListItem ? "列表中的一项" : "单个设置值（只能改指向，不能移除）", Classes = { "subtitle" } });
         stack.Children.Add(combo);

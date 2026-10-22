@@ -34,3 +34,4 @@ service.json
 .env.*
 tests/*.json
 backups/
+.local/

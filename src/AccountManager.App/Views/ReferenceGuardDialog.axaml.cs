@@ -16,6 +16,9 @@ public partial class ReferenceGuardDialog : Window
     public ReferenceGuardDialog()
     {
         InitializeComponent();
+        ProviderBox.Trimmed();
+        ModelBox.Trimmed();
+        DialogWindowBounds.KeepOnScreen(this);
     }
 
     public ReferenceGuardResult? Result { get; private set; }
@@ -24,6 +27,7 @@ public partial class ReferenceGuardDialog : Window
     {
         var dialog = new ReferenceGuardDialog();
         dialog.Init(input);
+        DialogWindowBounds.Fit(dialog, owner, center: true);
         await dialog.ShowDialog(owner);
         return dialog.Result;
     }

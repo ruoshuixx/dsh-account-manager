@@ -296,7 +296,10 @@ public class DshBackendCodexTests
 
         var providers = ProfilePatchDocument.Load(f.PatchPath).GetProviders()!;
         Assert.Equal(new[] { "openai-codex" }, providers.Select(kv => kv.Key).ToArray());
-        Assert.Empty(providers["openai-codex"]!.AsObject());
+        var models = providers["openai-codex"]!["models"]!.AsArray();
+        Assert.Equal(SubagentRouteService.OfficialCodexModels, models.Select(m => m!["id"]!.GetValue<string>()).ToArray());
+        Assert.All(models, m => Assert.Single(m!.AsObject())); // ids only
+        Assert.Contains("      openai-codex:\n        models:\n          - id: gpt-6.1-sol\n", f.Patch);
     }
 
     [Fact]
@@ -321,7 +324,8 @@ public class DshBackendCodexTests
         var providers = ProfilePatchDocument.Load(f.PatchPath).GetProviders()!;
         Assert.True(providers.ContainsKey("openai-codex"));
         Assert.Equal("https://example.test/v1", providers["other"]!["baseURL"]!.GetValue<string>());
-        Assert.StartsWith(patch.TrimEnd('\n'), f.Patch.Replace("\n      openai-codex: {}", string.Empty).TrimEnd('\n'));
+        Assert.StartsWith(patch, f.Patch); // the new route is appended after the existing providers
+        Assert.Equal(SubagentRouteService.OfficialCodexModels, providers["openai-codex"]!["models"]!.AsArray().Select(m => m!["id"]!.GetValue<string>()).ToArray());
     }
 }
 

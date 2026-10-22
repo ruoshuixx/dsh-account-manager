@@ -44,7 +44,8 @@ public class DshServicesTests
         Assert.Equal("{\"x\":1}", f.CredentialsDoc.GetRef("CODEX_OAUTH_1"));
         var providers = ProfilePatchDocument.Load(f.PatchPath).GetProviders()!;
         Assert.Equal(3, providers.Count); // two API providers and the built-in Codex route the first activation enabled
-        Assert.Empty(providers[ProviderViewMapper.CodexRouteId]!.AsObject());
+        Assert.Equal(SubagentRouteService.OfficialCodexModels,
+            providers[ProviderViewMapper.CodexRouteId]!["models"]!.AsArray().Select(m => m!["id"]!.GetValue<string>()).ToArray());
         var volc = providers[DshBackend.CockpitProviderId("api-src-1")]!.AsObject();
         Assert.Equal("openai-responses", volc["api"]!.GetValue<string>());
         Assert.Equal("Volc Coding", volc["displayName"]!.GetValue<string>());

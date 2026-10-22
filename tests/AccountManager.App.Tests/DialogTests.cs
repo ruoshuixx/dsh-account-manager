@@ -22,8 +22,35 @@ public static class TestAppBuilder
 {
     // Headless setup has no desktop lifetime: App never creates services, reads credentials,
     // starts auto-refresh, or launches the user's real main window.
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<AccountManager.App.App>()
-        .UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).WithInterFont();
+    public static AppBuilder BuildAvaloniaApp() => WithProductionFonts(AppBuilder.Configure<AccountManager.App.App>()
+        .UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false }).WithInterFont());
+
+    /// <summary>
+    /// The same face selection as the Linux app (Program.WithLinuxSystemFont): Inter for Latin text and an installed
+    /// CJK face for Chinese glyphs, so layout tests measure text as the real window does. Best effort.
+    /// </summary>
+    private static AppBuilder WithProductionFonts(AppBuilder builder)
+    {
+        try
+        {
+            var installed = SkiaSharp.SKFontManager.Default.GetFontFamilies();
+            var fallbacks = AccountManager.App.Services.UiFontSelector.Fallbacks(installed);
+            if (fallbacks.Count > 0)
+            {
+                return builder.With(new Avalonia.Media.FontManagerOptions
+                {
+                    DefaultFamilyName = "fonts:Inter#Inter",
+                    FontFallbacks = fallbacks.Select(name => new Avalonia.Media.FontFallback { FontFamily = new Avalonia.Media.FontFamily(name) }).ToArray(),
+                });
+            }
+        }
+        catch
+        {
+            // Keep the bundled face.
+        }
+
+        return builder;
+    }
 }
 
 public class DialogTests

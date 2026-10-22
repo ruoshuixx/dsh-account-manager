@@ -7,19 +7,19 @@
         x:DataType="vm:MainWindowViewModel"
         Title="DSH 账号管理"
         Icon="avares://DshAccountManager/Assets/app.ico"
-        Width="1140" Height="720"
-        MinWidth="1000" MinHeight="560"
+        Width="980" Height="620"
+        MinWidth="860" MinHeight="480"
         WindowStartupLocation="CenterScreen">
 
   <Window.Resources>
     <!-- one quota window: exact-width bar + remaining %, or a plain state note -->
     <DataTemplate x:Key="QuotaCellTemplate" x:DataType="vm:QuotaCellViewModel">
-      <Grid RowDefinitions="Auto,Auto" VerticalAlignment="Center" ToolTip.Tip="{Binding Tooltip}">
-        <Grid Grid.Row="0" ColumnDefinitions="*,40">
+      <Grid RowDefinitions="Auto,Auto" VerticalAlignment="Center" ClipToBounds="True" ToolTip.Tip="{Binding Tooltip}">
+        <Grid Grid.Row="0" ColumnDefinitions="*,38">
           <controls:QuotaBar Grid.Column="0"
                              Height="5"
                              VerticalAlignment="Center"
-                             Margin="0,0,7,0"
+                             Margin="0,0,6,0"
                              Value="{Binding Percent}"
                              Track="{DynamicResource TrackBrush}"
                              TrackBorder="{DynamicResource TrackBorderBrush}"
@@ -38,37 +38,46 @@
                      IsVisible="{Binding !HasBar}"
                      Classes="muted"
                      FontSize="12"
+                     TextTrimming="CharacterEllipsis"
                      VerticalAlignment="Center" />
         </Grid>
         <TextBlock Grid.Row="1"
                    Text="{Binding ResetText}"
                    IsVisible="{Binding HasBar}"
                    Classes="muted"
-                   FontSize="10.5"
+                   FontSize="11"
                    TextTrimming="CharacterEllipsis"
-                   Margin="0,3,0,0" />
+                   Margin="0,2,0,0" />
       </Grid>
     </DataTemplate>
 
     <DataTemplate x:Key="ImportRowTemplate" x:DataType="vm:AccountRowViewModel">
-      <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="6,4">
-        <Grid ColumnDefinitions="30,*,90,120">
+      <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="4,3">
+        <Grid ColumnDefinitions="30,*,80,140">
           <CheckBox Grid.Column="0" IsChecked="{Binding IsImportSelected}" HorizontalAlignment="Center" VerticalAlignment="Center" />
           <StackPanel Grid.Column="1" VerticalAlignment="Center">
-            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
             <TextBlock Classes="subtitle" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" />
           </StackPanel>
-          <TextBlock Grid.Column="2" Text="{Binding PlanText}" Classes="muted" VerticalAlignment="Center" />
-          <TextBlock Grid.Column="3" Text="{Binding Row.Status}" Classes="muted" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+          <TextBlock Grid.Column="2" Text="{Binding PlanText}" Classes="muted" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,6,0" />
+          <TextBlock Grid.Column="3" Text="{Binding Row.Status}" Classes="muted" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Row.Status}" />
         </Grid>
       </Border>
     </DataTemplate>
 
     <DataTemplate x:Key="AccountRowTemplate" x:DataType="vm:AccountRowViewModel">
-      <Grid ColumnDefinitions="40,*,172,148,148,205"
-            Height="54"
+      <!-- Every cell is clipped to its own column; the identity column is the only flexible one and trims. -->
+      <Grid MinHeight="44"
             HorizontalAlignment="Stretch"
             IsVisible="{Binding IsVisible}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="34" />
+          <ColumnDefinition Width="*" MinWidth="140" />
+          <ColumnDefinition Width="150" />
+          <ColumnDefinition Width="128" />
+          <ColumnDefinition Width="128" />
+          <ColumnDefinition Width="182" />
+        </Grid.ColumnDefinitions>
 
         <!-- selection: query quota (Codex) and/or export (saved accounts) -->
         <CheckBox Grid.Column="0"
@@ -77,41 +86,44 @@
                   ToolTip.Tip="勾选后：可查询额度（Codex 行）、可导出（已保存账号）" />
 
         <!-- account identity -->
-        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,10,0" Spacing="3">
-          <StackPanel Orientation="Horizontal" Spacing="7">
-            <Border Classes="chip success" IsVisible="{Binding IsCurrent}">
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,4,10,4" Spacing="1" ClipToBounds="True">
+          <Grid ColumnDefinitions="Auto,*">
+            <Border Classes="chip success" IsVisible="{Binding IsCurrent}" Margin="0,0,6,0">
               <TextBlock Text="当前" />
             </Border>
-            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13.5" TextTrimming="CharacterEllipsis" />
-          </StackPanel>
+            <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" FontSize="13.5" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+          </Grid>
           <TextBlock Classes="subtitle" Text="{Binding Subtitle}" IsVisible="{Binding HasSubtitle}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding AccountTooltip}" />
         </StackPanel>
 
-        <!-- subscription info: team-coloured plan badge + remaining days -->
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,10,0" ToolTip.Tip="{Binding SubscriptionTooltip}">
-          <Border Classes="chip" Background="{Binding PlanBackground}" Padding="8,2">
-            <TextBlock Text="{Binding PlanText}" Foreground="{Binding PlanForeground}" FontWeight="SemiBold" FontSize="11" />
+        <!-- subscription info: team-coloured plan badge + remaining days; wraps instead of overflowing -->
+        <WrapPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,2,8,2" ClipToBounds="True" ToolTip.Tip="{Binding SubscriptionTooltip}">
+          <Border Classes="chip" Background="{Binding PlanBackground}" Padding="7,1" Margin="0,1,6,1" MaxWidth="140">
+            <TextBlock Text="{Binding PlanText}" Foreground="{Binding PlanForeground}" FontWeight="SemiBold" FontSize="11" TextTrimming="CharacterEllipsis" />
           </Border>
-          <TextBlock Text="{Binding SubscriptionDaysText}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding SubscriptionDaysText}" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,1,6,1" MaxWidth="100" TextTrimming="CharacterEllipsis" />
           <Button Classes="chipAction"
                   Content="{Binding ResetCreditsText}"
                   Command="{Binding ResetCommand}"
                   IsVisible="{Binding IsCodex}"
+                  Margin="0,1,0,1"
                   ToolTip.Tip="{Binding ResetCreditsTooltip}" />
-        </StackPanel>
+        </WrapPanel>
 
         <ContentControl Grid.Column="3"
                         Content="{Binding Quota5h}"
                         ContentTemplate="{StaticResource QuotaCellTemplate}"
                         IsVisible="{Binding IsCodex}"
-                        VerticalAlignment="Center" Margin="0,0,12,0" />
+                        ClipToBounds="True"
+                        VerticalAlignment="Center" Margin="0,0,10,0" />
         <TextBlock Grid.Column="3" Text="—" Classes="muted" VerticalAlignment="Center" IsVisible="{Binding IsApi}" />
 
         <ContentControl Grid.Column="4"
                         Content="{Binding QuotaWk}"
                         ContentTemplate="{StaticResource QuotaCellTemplate}"
                         IsVisible="{Binding IsCodex}"
-                        VerticalAlignment="Center" Margin="0,0,12,0" />
+                        ClipToBounds="True"
+                        VerticalAlignment="Center" Margin="0,0,10,0" />
         <TextBlock Grid.Column="4" Text="—" Classes="muted" VerticalAlignment="Center" IsVisible="{Binding IsApi}" />
 
         <!-- actions -->
@@ -151,9 +163,9 @@
   <Grid RowDefinitions="Auto,Auto,*,Auto,Auto">
 
     <!-- single toolbar row: list ops (left) | warning | file ops + settings (right) -->
-    <Border Grid.Row="0" Classes="card" Margin="14,14,14,8" Padding="16,9,12,9">
+    <Border Grid.Row="0" Classes="card" Margin="10,10,10,6" Padding="12,6,10,6">
       <Grid ColumnDefinitions="Auto,*,Auto">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <CheckBox Content="全选" IsChecked="{Binding SelectAllVisibleChecked, Mode=TwoWay}" VerticalAlignment="Center" ToolTip.Tip="全选 / 取消当前可见行" />
           <Button Classes="primary" Command="{Binding QuerySelectedCommand}" ToolTip.Tip="只读刷新勾选账号的额度">
             <StackPanel Orientation="Horizontal" Spacing="7">
@@ -171,8 +183,8 @@
             </StackPanel>
           </Button>
         </StackPanel>
-        <TextBlock Grid.Column="1" Classes="error" Text="{Binding ProviderWarning}" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,12,0" TextTrimming="CharacterEllipsis" />
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <TextBlock Grid.Column="1" Classes="error" Text="{Binding ProviderWarning}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProviderWarning}" />
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Button Classes="toolbar" Command="{Binding ReadDshCommand}">
             <ToolTip.Tip>
               <StackPanel>
@@ -207,31 +219,31 @@
       </Grid>
     </Border>
 
-    <Border Grid.Row="1" Classes="card" Margin="14,0,14,8" Padding="14,8" IsVisible="{Binding HasUpdate}">
+    <Border Grid.Row="1" Classes="card" Margin="10,0,10,6" Padding="12,5" IsVisible="{Binding HasUpdate}">
       <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto">
         <TextBlock Text="{Binding UpdateStatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-        <Button Grid.Column="1" Classes="primary" Content="升级并重启" Command="{Binding InstallUpdateCommand}" IsVisible="{Binding !IsUpdating}" />
-        <Button Grid.Column="2" Classes="mini" Content="取消下载" Command="{Binding CancelUpdateCommand}" IsVisible="{Binding CanCancelUpdate}" />
-        <ProgressBar Grid.Row="1" Grid.ColumnSpan="3" Minimum="0" Maximum="100" Value="{Binding UpdateProgress}" Height="6" Margin="0,8,0,0" IsVisible="{Binding IsUpdating}" />
+        <Button Grid.Column="1" Classes="primary" Content="升级并重启" Command="{Binding InstallUpdateCommand}" IsVisible="{Binding !IsUpdating}" Margin="8,0,0,0" />
+        <Button Grid.Column="2" Classes="mini" Content="取消下载" Command="{Binding CancelUpdateCommand}" IsVisible="{Binding CanCancelUpdate}" Margin="8,0,0,0" />
+        <ProgressBar Grid.Row="1" Grid.ColumnSpan="3" Minimum="0" Maximum="100" Value="{Binding UpdateProgress}" Height="6" Margin="0,6,0,0" IsVisible="{Binding IsUpdating}" />
       </Grid>
     </Border>
 
     <!-- body -->
-    <Border Grid.Row="2" Classes="card" Margin="14,0,14,8">
+    <Border Grid.Row="2" Classes="card" Margin="10,0,10,6">
       <Grid RowDefinitions="Auto,Auto,*">
 
         <!-- import preview -->
         <Border Grid.Row="0"
                 IsVisible="{Binding ImportPanelVisible}"
                 Background="{DynamicResource ChipWarnBgBrush}"
-                CornerRadius="10" Margin="10,10,10,0" Padding="12">
+                CornerRadius="8" Margin="8,8,8,0" Padding="10,8">
           <Grid RowDefinitions="Auto,*">
             <Grid ColumnDefinitions="*,Auto,Auto">
               <TextBlock Text="{Binding ImportSummary}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
               <Button Grid.Column="1" Classes="primary" Content="确认导入" Command="{Binding CommitImportCommand}" Margin="8,0,0,0" />
               <Button Grid.Column="2" Classes="toolbar" Content="取消" Command="{Binding CancelImportCommand}" Margin="8,0,0,0" />
             </Grid>
-            <ScrollViewer Grid.Row="1" MaxHeight="170" Margin="0,8,0,0">
+            <ScrollViewer Grid.Row="1" MaxHeight="120" Margin="0,6,0,0">
               <StackPanel Spacing="6">
                 <ItemsControl ItemsSource="{Binding ImportRows}" ItemTemplate="{StaticResource ImportRowTemplate}" />
                 <TextBlock Text="{Binding ImportNotes}" Classes="subtitle" TextWrapping="Wrap" IsVisible="{Binding HasImportNotes}" />
@@ -248,13 +260,21 @@
         </Border>
 
         <!-- list header -->
-        <Grid Grid.Row="1" ColumnDefinitions="40,*,172,148,148,205" Margin="10,12,10,8">
-          <TextBlock Grid.Column="0" Classes="colhead" Text="选择" HorizontalAlignment="Center" />
-          <TextBlock Grid.Column="1" Classes="colhead" Text="账号" />
-          <TextBlock Grid.Column="2" Classes="colhead" Text="订阅信息" />
-          <TextBlock Grid.Column="3" Classes="colhead" Text="5 小时窗口（剩余）" />
-          <TextBlock Grid.Column="4" Classes="colhead" Text="本周窗口（剩余）" />
-          <TextBlock Grid.Column="5" Classes="colhead" Text="操作" />
+        <Grid Grid.Row="1" Margin="0,6,0,4">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="34" />
+            <ColumnDefinition Width="*" MinWidth="140" />
+            <ColumnDefinition Width="150" />
+            <ColumnDefinition Width="128" />
+            <ColumnDefinition Width="128" />
+            <ColumnDefinition Width="182" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Classes="colhead" Text="选择" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+          <TextBlock Grid.Column="1" Classes="colhead" Text="账号" TextTrimming="CharacterEllipsis" />
+          <TextBlock Grid.Column="2" Classes="colhead" Text="订阅信息" TextTrimming="CharacterEllipsis" />
+          <TextBlock Grid.Column="3" Classes="colhead" Text="5 小时窗口（剩余）" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+          <TextBlock Grid.Column="4" Classes="colhead" Text="本周窗口（剩余）" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+          <TextBlock Grid.Column="5" Classes="colhead" Text="操作" TextTrimming="CharacterEllipsis" />
         </Grid>
 
         <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
@@ -264,14 +284,14 @@
     </Border>
 
     <!-- log panel -->
-    <Border Grid.Row="3" Classes="card" Margin="14,0,14,8" Padding="10" IsVisible="{Binding LogExpanded}" MaxHeight="190">
+    <Border Grid.Row="3" Classes="card" Margin="10,0,10,6" Padding="8" IsVisible="{Binding LogExpanded}" MaxHeight="130">
       <Grid RowDefinitions="Auto,*">
         <StackPanel Orientation="Horizontal" Spacing="8">
           <TextBlock Text="运行日志" FontWeight="SemiBold" VerticalAlignment="Center" />
           <Button Classes="mini" Content="打开日志目录" Command="{Binding RevealLogsCommand}" />
           <Button Classes="mini" Content="清空" Command="{Binding ClearLogCommand}" />
         </StackPanel>
-        <ScrollViewer Grid.Row="1" Margin="0,6,0,0">
+        <ScrollViewer Grid.Row="1" Margin="0,4,0,0" HorizontalScrollBarVisibility="Auto">
           <ItemsControl ItemsSource="{Binding LogLines}">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="x:String">
@@ -283,30 +303,30 @@
       </Grid>
     </Border>
 
-    <!-- status bar -->
-    <Border Grid.Row="4" Margin="14,0,14,14">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+    <!-- status bar: the left part wraps onto a second line instead of overflowing; the buttons stay at the right -->
+    <Border Grid.Row="4" Margin="10,0,10,8">
+      <Grid ColumnDefinitions="Auto,*,Auto">
         <ProgressBar Grid.Column="0" IsIndeterminate="True" Width="70" Height="5" VerticalAlignment="Center" Margin="0,0,10,0" IsVisible="{Binding IsWorking}" />
-        <TextBlock Grid.Column="1" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="10,0,12,0">
-          <Border Classes="chip warn" IsVisible="{Binding HasUndo}">
+        <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+          <TextBlock Text="{Binding StatusText}" MaxWidth="360" VerticalAlignment="Center" Margin="0,2,12,2" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusText}" />
+          <Border Classes="chip warn" IsVisible="{Binding HasUndo}" Margin="0,2,12,2">
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="{Binding UndoText}" VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding UndoText}" VerticalAlignment="Center" MaxWidth="240" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding UndoText}" />
               <Button Classes="chipAction" Content="撤销" Command="{Binding UndoDeleteCommand}" IsEnabled="{Binding !IsBusy}" ToolTip.Tip="从删除前的加密备份恢复这个供应商（原 ID、Key 引用和 Key）" />
               <Button Classes="chipAction" Content="×" Command="{Binding DismissUndoCommand}" ToolTip.Tip="不再显示" />
             </StackPanel>
           </Border>
-          <Border Classes="chip warn" IsVisible="{Binding HasReferenceWarning}">
+          <Border Classes="chip warn" IsVisible="{Binding HasReferenceWarning}" Margin="0,2,12,2">
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="{Binding ReferenceWarning}" VerticalAlignment="Center" MaxWidth="300" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding ReferenceWarning}" VerticalAlignment="Center" MaxWidth="280" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ReferenceWarning}" />
               <Button Classes="chipAction" Content="修复" Command="{Binding RepairReferencesCommand}" IsEnabled="{Binding !IsBusy}" ToolTip.Tip="列出这些引用并选择如何修复" />
             </StackPanel>
           </Border>
-        </StackPanel>
-        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <TextBlock Text="{Binding SummaryText}" Classes="subtitle" />
-          <TextBlock Text="{Binding CurrentText}" Classes="subtitle" />
-          <Button Classes="mini" Content="检查更新" Command="{Binding CheckUpdatesCommand}" IsEnabled="{Binding !IsUpdating}" ToolTip.Tip="{Binding CurrentVersionText}" />
+          <TextBlock Text="{Binding SummaryText}" Classes="subtitle" VerticalAlignment="Center" Margin="0,2,12,2" TextTrimming="CharacterEllipsis" MaxWidth="300" ToolTip.Tip="{Binding SummaryText}" />
+          <TextBlock Text="{Binding CurrentText}" Classes="subtitle" VerticalAlignment="Center" Margin="0,2,12,2" TextTrimming="CharacterEllipsis" MaxWidth="240" ToolTip.Tip="{Binding CurrentText}" />
+        </WrapPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Classes="mini" Content="检查更新" Command="{Binding CheckUpdatesCommand}" IsEnabled="{Binding !IsUpdating}" Margin="0" ToolTip.Tip="{Binding CurrentVersionText}" />
           <ToggleButton Content="日志" IsChecked="{Binding LogExpanded}" Padding="8,2" />
         </StackPanel>
       </Grid>

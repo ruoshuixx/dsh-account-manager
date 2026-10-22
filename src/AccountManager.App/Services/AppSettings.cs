@@ -18,9 +18,9 @@ public sealed class AppSettings
     /// <summary>When true, low quota on the active Codex account triggers polling and an automatic switch.</summary>
     public bool AutoSwitchAccount { get; set; }
 
-    public double WindowWidth { get; set; } = 1140;
+    public double WindowWidth { get; set; } = 980;
 
-    public double WindowHeight { get; set; } = 720;
+    public double WindowHeight { get; set; } = 620;
 
     public bool LogExpanded { get; set; }
 

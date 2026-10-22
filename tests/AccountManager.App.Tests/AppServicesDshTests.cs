@@ -68,6 +68,17 @@ public sealed class AppServicesDshTests : IDisposable
         Assert.Null(settings.DshProfile);
     }
 
+    [Fact]
+    public void WebDavSyncUsesTheSharedFolderAndKnowsOnlyItsOwnLegacyFolder()
+    {
+        var services = Create(new AppSettings { DshHome = Path.Combine(_root, "dsh"), WebDavUrl = "https://dav.example.test/dav/", WebDavUsername = "u" });
+
+        Assert.Equal("/AccountManager/", AppServices.WebDavFolder);
+        Assert.Equal("/DshAccountManager/", AppServices.LegacyWebDavFolder);
+        Assert.Equal("/AccountManager/", services.BuildWebDavOptions().Folder);
+        Assert.Equal("/DshAccountManager/", services.BuildWebDavOptions(AppServices.LegacyWebDavFolder).Folder);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, true); } catch { /* best effort */ }

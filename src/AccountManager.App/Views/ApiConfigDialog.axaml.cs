@@ -12,6 +12,7 @@ public partial class ApiConfigDialog : Window
     public ApiConfigDialog()
     {
         InitializeComponent();
+        DialogWindowBounds.KeepOnScreen(this);
     }
 
     public ApiConfigResult? Result { get; private set; }
@@ -31,6 +32,7 @@ public partial class ApiConfigDialog : Window
         dialog.HintText.Text = input.HasCredential
             ? "留空密钥将保留现有密钥；填写新密钥会写入 dsh 的凭据文件并替换旧密钥。"
             : "当前只有供应商配置，没有本地密钥；填写密钥会写入 dsh 的凭据文件。";
+        DialogWindowBounds.Fit(dialog, owner, center: true);
         await dialog.ShowDialog(owner);
         return dialog.Result;
     }

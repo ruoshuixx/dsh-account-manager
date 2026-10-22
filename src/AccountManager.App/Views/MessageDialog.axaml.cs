@@ -11,6 +11,7 @@ public partial class MessageDialog : Window
     public MessageDialog()
     {
         InitializeComponent();
+        DialogWindowBounds.KeepOnScreen(this, minWidth: 300, minHeight: 0);
     }
 
     public static Task<bool> ShowAsync(Window? owner, string title, string message, bool confirm, bool dangerous)
@@ -33,6 +34,7 @@ public partial class MessageDialog : Window
             return dialog._result.Task;
         }
 
+        DialogWindowBounds.Fit(dialog, owner, minWidth: 300, minHeight: 0);
         dialog.ShowDialog(owner).ContinueWith(_ => dialog._result.TrySetResult(false));
         return dialog._result.Task;
     }

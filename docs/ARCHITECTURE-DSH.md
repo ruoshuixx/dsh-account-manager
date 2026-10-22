@@ -94,7 +94,15 @@ dsh 的设置里有些地方按 `provider` + `model` 点名某个 LLM 路由（�
 * **导入**：API 账号按“规范化后的 baseURL（主机名大小写、末尾 `/` 不计）+ 解析出的 Key”匹配 dsh 里已有的供应商，匹配上就更新它（保留 ID、`apiKeyEnv`、名称、协议，只补缺失的模型），不再新建重复的 `cockpit-*`；账号自带的供应商 ID 等于已有或“被引用但已不存在”的 ID 时同样按该 ID 更新/恢复。预览里列出“将修复：…”（默认勾选，可取消），导入写入后才应用；导入结束再次扫描并报告仍然失效的引用。预览只为“导入账号提供了该模型且只有一个候选”的引用生成修复，不替用户在多个候选里猜。
 * **日志**：切号记录“切换到 <邮箱>（<工作区后 8 位>）”和令牌写回；删除/修复/恢复也有记录；令牌经 `SecretRegistry` 脱敏，不会出现在日志里。
 
-## 8. 已知限制
+## 8. 子代理可用模型
+
+* dsh 的 `@deepseek-ai/dsh-tool-subagent`：子代理要选择别的供应商/模型，宿主设置项 `subagent-model-selection-settings`（`@deepseek-ai/dsh-tool-subagent/model-selection-settings`，由 dsh-web-app bundle 声明）必须 `enabled: true` 且 `allowedModels: [{provider, model}, …]` 非空（精确路由，重复或“启用但为空”都会报错）。策略在**新的顶层会话**组装时采样一次，子代理继承；已有会话保持旧策略，所以改完要新建对话。
+* `ProfilePatchDocument.GetSubagentSelection / AddSubagentRoutes`：只改该条目的 `config.enabled` 和 `config.allowedModels`——条目不存在时在用户层末尾追加（不写 `name:`，dsh 按 id 合并）；已存在时只把新项追加到列表末尾、必要时把 `enabled` 的值改成 `true`，其余字节、注释、未知键不动。行内（flow）格式、非列表、非 provider/model 项、已有重复项一律拒绝并报 `DshException`，不重写。重复项和“启用但为空”永远不会写出。
+* `SubagentRouteService.ComputeCandidates`：用户层每个供应商 × 它列出的模型（不带 `text` 输入的模型跳过）；Codex 路由存在时：`openai-codex.models` 明确列出的就用这些；否则取官方当前列表 `OfficialCodexModels`（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，由用户选定的三个；来源 OpenAI Codex 模型页 https://learn.chatgpt.com/docs/models，2026-10-20；集中在一个常量里便于更新），若能找到 dsh 自带的 pi-ai 模型目录（`@earendil-works/pi-ai/dist/providers/data/openai-codex.json`，只取 `type: chat`）就只保留目录里也有的（空路由时 dsh 只能运行目录里的模型）；找不到目录就原样使用。不会加入 gpt-6-sol、gpt-5.6 系列或已下线的 gpt-5.5 / gpt-5.3-codex-spark。
+* 目录查找（`CodexCatalog`，只读、有界）：`dsh` 启动脚本里 `DSH_BIN='…'` 指向的 `node_modules`；Linux 的 `~/.local/share/dsh-tauri/dependencies/dsh/node_modules`；Windows 上额外在 `%LOCALAPPDATA%\Programs`、`%ProgramFiles%`、`%LOCALAPPDATA%`、`%APPDATA%` 下名字含 deepseek / dsh 的文件夹里向下找（深度 ≤ 6、不进入 `node_modules`、支持 pnpm 的 `.pnpm`）。官方桌面版的实际安装位置和是否把依赖打进 asar 尚未验证，找不到时按官方列表原样使用。
+* `SubagentRouteService.Merge`：加密备份 → 在 `cordis.patch.yml` 的锁内用最新内容重算候选并合并 → 回读校验。触发点：每次导入成功后（`ImportService`），以及 `EnsureCodexRoute` 首次写入 `openai-codex` 条目时（仅当用户层还没有该条目；写入的是带 `models:` 的条目，列出官方现行 Codex 模型 `OfficialCodexModels` 的 id，dsh 按自带目录补全 name/上下文等，目录里没有的 id 由路由的 api/baseURL 兜底；已有条目只要有任何一个键（models、modelOverrides、displayName……）就逐字节不动；完全空的条目（`{}` 或只有键名没有内容，即 0.1.2 写入的）没有任何用户选择，由 `SubagentRouteService.UpgradeEmptyCodexRoute` 补全成同样的列表：先加密备份，在锁内再确认仍为空，回读校验并写日志；`Merge`（每次导入）开头和 `EnsureCodexRoute` 都会调用它。这样 dsh 的模型选择器只显示这几个，不会出现目录里已下线的 gpt-5.5 / gpt-5.3-codex-spark）。没有新增时不写、不备份。结果只写进导入结果和日志，并附一行“改动只对 dsh 里的新对话生效”。
+
+## 9. 已知限制
 
 * OAuth 授权请求里的 `originator` 参数使用固定值（`CodexOAuthService`），这是授权服务认可的取值，不要随意更改。
 * Windows 目前只保证编译与单元测试通过。

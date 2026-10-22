@@ -50,6 +50,12 @@ public sealed class DshBackend : IAccountBackend
 
     public DshHome Home => _home;
 
+    /// <summary>
+    /// When set, enabling the built-in Codex route also merges the Codex (and API) routes into dsh's sub-agent model
+    /// selection, so a main agent can delegate to them.
+    /// </summary>
+    public SubagentRouteService? Subagents { get; set; }
+
     public AccountVault Vault => _vault;
 
     /// <summary>Points the backend at another DSH home / profile (Settings).</summary>
@@ -347,8 +353,12 @@ public sealed class DshBackend : IAccountBackend
 
     /// <summary>
     /// dsh only serves the routes the user layer lists under <c>llm-pi-ai</c> <c>config.providers</c>; a fresh
-    /// profile lists none, so a written Codex grant alone shows no Codex models. An empty <c>openai-codex</c> entry
-    /// registers the built-in route with the installed catalog's models. An existing entry is never touched.
+    /// profile lists none, so a written Codex grant alone shows no Codex models. A missing <c>openai-codex</c> entry
+    /// is created with an explicit <c>models</c> list of the official current ids
+    /// (<see cref="SubagentRouteService.OfficialCodexModels"/>, ids only; dsh fills in the rest from its catalog), so
+    /// the model picker shows exactly these and the retired ids of the shipped catalog never appear. An existing
+    /// entry is left alone, except one that is exactly empty (what 0.1.2 wrote): it carries no user choices and is
+    /// upgraded to the same list by <see cref="SubagentRouteService.UpgradeEmptyCodexRoute"/> (after a backup).
     /// </summary>
     private void EnsureCodexRoute(DshHome home)
     {
@@ -356,13 +366,31 @@ public sealed class DshBackend : IAccountBackend
         {
             var added = ProfilePatchDocument.Update(home.PatchPath, d =>
                 d.GetProviders()?.ContainsKey(ProviderViewMapper.CodexRouteId) != true
-                && d.SetProvider(ProviderViewMapper.CodexRouteId, new JsonObject()));
-            if (added) { _log?.Info("已在 dsh 供应商配置中启用内置 Codex 路由（openai-codex），dsh 会自动热加载。"); }
+                && d.SetProvider(ProviderViewMapper.CodexRouteId, SubagentRouteService.OfficialCodexRoute()));
+            if (added)
+            {
+                _log?.Info("已在 dsh 供应商配置中启用内置 Codex 路由（openai-codex）并写入官方现行 Codex 模型，dsh 会自动热加载。");
+                MergeSubagentRoutes();
+            }
+            else if (Subagents?.UpgradeEmptyCodexRoute() == true)
+            {
+                MergeSubagentRoutes();
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // The grant is written; only the route registration failed.
             _log?.Warn("Codex 凭据已写入，但未能在供应商配置中启用 openai-codex 路由：" + _secrets.Redact(ex.Message));
+        }
+    }
+
+    private void MergeSubagentRoutes()
+    {
+        if (Subagents is null) { return; }
+        try { _ = Subagents.Merge(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.Warn("未能把 Codex 路由加入子代理可用模型：" + _secrets.Redact(ex.Message));
         }
     }
 

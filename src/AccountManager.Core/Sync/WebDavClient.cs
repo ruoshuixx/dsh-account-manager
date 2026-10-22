@@ -19,7 +19,7 @@ public sealed class WebDavOptions
     public string Password { get; set; } = string.Empty;
 
     /// <summary>Remote folder (relative to <see cref="BaseUrl"/>) that holds the timestamped JSON files.</summary>
-    public string Folder { get; set; } = "/DshAccountManager/";
+    public string Folder { get; set; } = "/AccountManager/";
 
     public int TimeoutMs { get; set; } = 30000;
 
@@ -77,7 +77,7 @@ public sealed class WebDavClient
             throw new WebDavException("请先填写 WebDAV 账号。");
         }
 
-        var folder = string.IsNullOrWhiteSpace(options.Folder) ? "/DshAccountManager/" : options.Folder.Trim();
+        var folder = string.IsNullOrWhiteSpace(options.Folder) ? "/AccountManager/" : options.Folder.Trim();
         if (!folder.StartsWith('/')) { folder = "/" + folder; }
         if (!folder.EndsWith('/')) { folder += "/"; }
 

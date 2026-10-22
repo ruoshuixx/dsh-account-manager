@@ -35,6 +35,7 @@ public partial class ResetCreditsDialog : Window
     public ResetCreditsDialog()
     {
         InitializeComponent();
+        DialogWindowBounds.KeepOnScreen(this, minHeight: 0);
     }
 
     public bool Confirmed { get; private set; }
@@ -43,6 +44,7 @@ public partial class ResetCreditsDialog : Window
     {
         var dialog = new ResetCreditsDialog();
         dialog.Build(input);
+        DialogWindowBounds.Fit(dialog, owner, minHeight: 0);
         await dialog.ShowDialog(owner);
         return dialog.Confirmed;
     }

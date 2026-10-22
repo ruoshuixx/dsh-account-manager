@@ -92,28 +92,25 @@ public sealed partial class MainWindowViewModel
         string? directory = null;
         try
         {
-            var files = await client.ListAsync().ConfigureAwait(true);
-            if (files.Count == 0)
+            // The shared folder first (the newest file wins whatever its name prefix); the legacy folder only when it is empty.
+            var found = await WebDavSharedFolder.FindNewestAsync(client, CreateLegacySyncClient()).ConfigureAwait(true);
+            if (found is null)
             {
                 StatusText = "云端暂无同步文件。";
                 await _dialogs.ShowInfoAsync("没有可下载的内容", "云端目录还没有账号 JSON。请先在另一台设备上传。");
                 return;
             }
 
-            // Newest first; unknown timestamps fall back to the file name.
-            var newest = files
-                .OrderByDescending(f => f.LastModified ?? DateTimeOffset.MinValue)
-                .ThenByDescending(f => f.Name, StringComparer.Ordinal)
-                .First();
-
+            var newest = found.File;
             var message = "将从云端下载最新一份账号 JSON 并进入导入预览：\n\n"
-                + client.Folder + newest.Name
+                + found.Path
                 + (newest.LastModified is { } t ? "\n时间：" + t.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "")
+                + (found.FromLegacyFolder ? "\n\n共享目录 " + client.Folder + " 里还没有文件，这是旧版目录里的文件（只读取，不会改动旧目录）。" : "")
                 + "\n\n下载后仍需在预览里勾选并「确认导入」才会写入本机。是否继续？";
             if (!await _dialogs.ConfirmAsync("从 WebDAV 下载", message)) { return; }
 
-            StatusText = "正在从 WebDAV 下载 " + newest.Name + " …";
-            var bytes = await client.DownloadAsync(newest.Name).ConfigureAwait(true);
+            StatusText = "正在从 WebDAV 下载 " + found.Path + " …";
+            var bytes = await found.Client.DownloadAsync(newest.Name).ConfigureAwait(true);
             if (bytes is null || bytes.Length == 0)
             {
                 StatusText = "云端文件已不存在，请重试。";
@@ -132,7 +129,7 @@ public sealed partial class MainWindowViewModel
             foreach (var item in preview.Rows) { ImportRows.Add(PreviewToRow(item)); }
             LoadImportPlan(preview);
             ImportPanelVisible = true;
-            ImportSummary = "云端 " + newest.Name + " 预览 " + preview.Rows.Count + " 条；选择后点击「确认导入」。";
+            ImportSummary = "云端 " + found.Path + " 预览 " + preview.Rows.Count + " 条；选择后点击「确认导入」。";
             StatusText = ImportSummary;
         }
         catch (Exception ex)
@@ -175,6 +172,13 @@ public sealed partial class MainWindowViewModel
             problem = _services.Secrets.Redact(ex.Message);
             return false;
         }
+    }
+
+    /// <summary>Read-only client for the folder earlier versions used; null when it cannot be built.</summary>
+    private WebDavClient? CreateLegacySyncClient()
+    {
+        try { return new WebDavClient(_services.BuildWebDavOptions(AppServices.LegacyWebDavFolder), SyncHttp); }
+        catch { return null; }
     }
 
     private static void CleanUpSyncDirectory(string? directory)

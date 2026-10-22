@@ -27,7 +27,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     // Stateless opener shared across invocations (keeps the instance API used by tests).
     private static readonly ShellLauncher SharedLauncher = new();
 
-    public MainWindowViewModel(AppServices services, IDialogService dialogs)
+    /// <param name="startBackgroundWork">
+    /// False (layout tests) skips the auto-refresh timer and the startup read + quota pass, so nothing runs until a
+    /// command is invoked and no quota request is ever made.
+    /// </param>
+    public MainWindowViewModel(AppServices services, IDialogService dialogs, bool startBackgroundWork = true)
     {
         _services = services;
         _dialogs = dialogs;
@@ -37,6 +41,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
         _autoRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(AutoRefreshMinutes) };
         _autoRefreshTimer.Tick += async (_, _) => await AutoRefreshTickAsync();
+        if (!startBackgroundWork) { return; }
         _autoRefreshTimer.Start();
 
         _ = StartupAsync();

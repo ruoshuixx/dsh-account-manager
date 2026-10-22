@@ -36,8 +36,8 @@ public partial class App : Application
             var services = new AppServices(settings);
 
             // Keep a comfortable default: never restore a near-fullscreen size.
-            var designWidth = Math.Clamp(settings.WindowWidth, 1000, 1400);
-            var designHeight = Math.Clamp(settings.WindowHeight, 620, 900);
+            var designWidth = Math.Clamp(settings.WindowWidth, 860, 1400);
+            var designHeight = Math.Clamp(settings.WindowHeight, 480, 900);
             var window = new Views.MainWindow { Services = services, Width = designWidth, Height = designHeight };
             // Before it is shown, so CenterScreen centres the fitted size. A high display scale can
             // otherwise make the designed minimum larger than the monitor.

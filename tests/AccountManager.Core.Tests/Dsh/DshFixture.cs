@@ -71,7 +71,7 @@ internal sealed class DshFixture : IDisposable
 {
     public const string Profile = "tauri";
 
-    public DshFixture(string? credentials = null, string? patch = null, IProviderRuntimeVerifier? verifier = null, string? composedBundle = null)
+    public DshFixture(string? credentials = null, string? patch = null, IProviderRuntimeVerifier? verifier = null, string? composedBundle = null, IReadOnlyList<string>? codexCatalog = null, bool subagents = false)
     {
         Root = Path.Combine(Path.GetTempPath(), "dshF-" + Guid.NewGuid().ToString("N")[..10]);
         HomeDir = Path.Combine(Root, "dsh");
@@ -90,11 +90,13 @@ internal sealed class DshFixture : IDisposable
         Backend = new DshBackend(Home, Vault, Secrets, Subscriptions, Log, verifier ?? Verifier);
         Dumper = new FakeDumper { Compose = composedBundle is null ? null : () => composedBundle + "\n" + Patch.Replace("- id: llm-pi-ai\n", "- id: llm-pi-ai\n  name: '@deepseek-ai/dsh-llm-pi-ai'\n") };
         References = new ReferenceService(Backend, Dumper, Backups, Secrets, Log);
+        Subagents = new SubagentRouteService(() => Home, Backups, Secrets, Log, () => codexCatalog ?? Array.Empty<string>());
+        if (subagents) { Backend.Subagents = Subagents; }
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
         Switch = new SwitchService(Backend, Mapper);
         Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References);
-        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References);
+        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, subagents ? Subagents : null);
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
     }
 
@@ -113,6 +115,7 @@ internal sealed class DshFixture : IDisposable
     public DshBackend Backend { get; }
     public FakeDumper Dumper { get; }
     public ReferenceService References { get; }
+    public SubagentRouteService Subagents { get; }
     public AccountMapper Mapper { get; }
     public AccountSnapshotService Snapshot { get; }
     public SwitchService Switch { get; }

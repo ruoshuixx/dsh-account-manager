@@ -37,6 +37,8 @@ public sealed class AppServices : IAddAccountServices
         Verifier = new DshRuntimeVerifier();
         Backend = new DshBackend(Home, Vault, Secrets, Subscriptions, Log, Verifier);
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
+        SubagentRoutes = new SubagentRouteService(() => Backend.Home, Backups, Secrets, Log);
+        Backend.Subagents = SubagentRoutes;
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
         Switch = new SwitchService(Backend, Mapper);
@@ -49,7 +51,7 @@ public sealed class AppServices : IAddAccountServices
 
         Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References);
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
-        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References);
+        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, SubagentRoutes);
     }
 
     public AppSettings Settings { get; }
@@ -70,6 +72,8 @@ public sealed class AppServices : IAddAccountServices
     public DshRuntimeVerifier Verifier { get; }
 
     public ReferenceService References { get; }
+
+    public SubagentRouteService SubagentRoutes { get; }
 
     public BackupService Backups { get; }
 
@@ -113,17 +117,21 @@ public sealed class AppServices : IAddAccountServices
 
     // ---- WebDAV sync (manual upload / download) ----------------------------
 
-    public const string WebDavFolder = "/DshAccountManager/";
+    /// <summary>Neutral folder shared by every tool that syncs Cockpit account JSON; the file-name prefix tells them apart.</summary>
+    public const string WebDavFolder = "/AccountManager/";
+
+    /// <summary>The folder earlier versions of this tool used. Only read from (when the shared folder is empty), never written.</summary>
+    public const string LegacyWebDavFolder = "/DshAccountManager/";
 
     /// <summary>True when a (protected) WebDAV app password is stored.</summary>
     public bool HasWebDavPassword => !string.IsNullOrEmpty(Settings.WebDavPassword);
 
-    public WebDavOptions BuildWebDavOptions() => new()
+    public WebDavOptions BuildWebDavOptions(string folder = WebDavFolder) => new()
     {
         BaseUrl = Settings.WebDavUrl ?? string.Empty,
         Username = Settings.WebDavUsername ?? string.Empty,
         Password = SecretProtector.UnprotectText(Settings.WebDavPassword) ?? string.Empty,
-        Folder = WebDavFolder,
+        Folder = folder,
     };
 
     /// <summary>Stores a new app password (protected); null/empty keeps the existing one.</summary>

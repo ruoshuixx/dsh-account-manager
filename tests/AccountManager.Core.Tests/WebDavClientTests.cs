@@ -9,10 +9,10 @@ namespace AccountManager.Core.Tests;
 public class WebDavClientTests
 {
     private const string Base = "https://dav.example.com/dav/";
-    private const string Folder = "/DshAccountManager/";
+    private const string Folder = "/AccountManager/";
     private const string FileName = "dsh_2026-10-07_14-30-05.json";
-    private const string FileUrl = "https://dav.example.com/dav/DshAccountManager/dsh_2026-10-07_14-30-05.json";
-    private const string DirUrl = "https://dav.example.com/dav/DshAccountManager/";
+    private const string FileUrl = "https://dav.example.com/dav/AccountManager/dsh_2026-10-07_14-30-05.json";
+    private const string DirUrl = "https://dav.example.com/dav/AccountManager/";
 
     private static (WebDavClient Client, StubHandler Handler) Create(
         Func<HttpRequestMessage, HttpResponseMessage> responder,
@@ -44,19 +44,19 @@ public class WebDavClientTests
         <?xml version="1.0" encoding="utf-8"?>
         <d:multistatus xmlns:d="DAV:">
           <d:response>
-            <d:href>/dav/DshAccountManager/</d:href>
+            <d:href>/dav/AccountManager/</d:href>
             <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
               <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
           </d:response>
           <d:response>
-            <d:href>/dav/DshAccountManager/dsh_2026-10-07_14-30-05.json</d:href>
+            <d:href>/dav/AccountManager/dsh_2026-10-07_14-30-05.json</d:href>
             <d:propstat><d:prop><d:resourcetype/>
               <d:getcontentlength>1234</d:getcontentlength>
               <d:getlastmodified>Wed, 07 Oct 2026 14:30:05 GMT</d:getlastmodified></d:prop>
               <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
           </d:response>
           <d:response>
-            <d:href>/dav/DshAccountManager/notes.txt</d:href>
+            <d:href>/dav/AccountManager/notes.txt</d:href>
             <d:propstat><d:prop><d:resourcetype/>
               <d:getcontentlength>5</d:getcontentlength></d:prop>
               <d:status>HTTP/1.1 200 OK</d:status></d:propstat>

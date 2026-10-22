@@ -40,7 +40,42 @@ internal static class DialogWindowBounds
             Math.Clamp(designHeight * zoom, minHeight, Math.Max(minHeight, maxHeight)));
     }
 
-    public static void Fit(Window dialog, Window? owner = null, bool center = false)
+    /// <summary>A dialog's limits and size inside a work area (all in logical units).</summary>
+    internal readonly record struct DialogBounds(double MinWidth, double MinHeight, double MaxWidth, double MaxHeight, double Width, double Height);
+
+    /// <summary>
+    /// Pure fitting maths: the dialog may be at most the work area minus decorations; width and height (NaN when the
+    /// dialog sizes itself to its content) are clamped into the limits.
+    /// </summary>
+    internal static DialogBounds ComputeDialogBounds(
+        double areaWidth, double areaHeight, double scaling, double width, double height,
+        double minWidth = DefaultMinWidth, double minHeight = DefaultMinHeight)
+    {
+        var maxWidth = Math.Max(1, areaWidth / scaling - WidthMargin);
+        var maxHeight = Math.Max(1, areaHeight / scaling - HeightMargin);
+        var lowWidth = Math.Min(minWidth, maxWidth);
+        var lowHeight = Math.Min(minHeight, maxHeight);
+        return new DialogBounds(
+            lowWidth, lowHeight, maxWidth, maxHeight,
+            double.IsNaN(width) ? width : Math.Clamp(width, lowWidth, maxWidth),
+            double.IsNaN(height) ? height : Math.Clamp(height, lowHeight, maxHeight));
+    }
+
+    internal const double DefaultMinWidth = 380;
+    internal const double DefaultMinHeight = 260;
+
+    /// <summary>
+    /// Keeps a dialog inside the work area now and whenever it moves to another screen or the scale changes.
+    /// Dialogs that size themselves to their content pass a small <paramref name="minHeight"/>.
+    /// </summary>
+    public static void KeepOnScreen(Window dialog, double minWidth = DefaultMinWidth, double minHeight = DefaultMinHeight)
+    {
+        dialog.ScalingChanged += (_, _) => Fit(dialog, minWidth: minWidth, minHeight: minHeight);
+        dialog.PositionChanged += (_, _) => Fit(dialog, minWidth: minWidth, minHeight: minHeight);
+    }
+
+    public static void Fit(Window dialog, Window? owner = null, bool center = false,
+        double minWidth = DefaultMinWidth, double minHeight = DefaultMinHeight)
     {
         var screen = dialog.Screens.ScreenFromWindow(owner ?? dialog) ?? dialog.Screens.Primary;
         if (screen is null) { return; }
@@ -50,16 +85,16 @@ internal static class DialogWindowBounds
 
         // Screen pixels must be converted to Avalonia logical units. Reserve space for
         // native decorations as well as a small margin; taskbars are already excluded.
-        var maxWidth = Math.Max(1, area.Width / scaling - WidthMargin);
-        var maxHeight = Math.Max(1, area.Height / scaling - HeightMargin);
-        dialog.MinWidth = Math.Min(380, maxWidth);
-        dialog.MinHeight = Math.Min(260, maxHeight);
-        dialog.MaxWidth = maxWidth;
-        dialog.MaxHeight = maxHeight;
-        dialog.Width = Math.Clamp(dialog.Width, dialog.MinWidth, maxWidth);
-        dialog.Height = Math.Clamp(dialog.Height, dialog.MinHeight, maxHeight);
+        var fit = ComputeDialogBounds(area.Width, area.Height, scaling, dialog.Width, dialog.Height, minWidth, minHeight);
+        dialog.MinWidth = fit.MinWidth;
+        dialog.MinHeight = fit.MinHeight;
+        dialog.MaxWidth = fit.MaxWidth;
+        dialog.MaxHeight = fit.MaxHeight;
+        dialog.Width = fit.Width;
+        dialog.Height = fit.Height;
 
-        if (!center) { return; }
+        // A dialog that sizes itself to its content has no height yet; the window manager centres it on its owner.
+        if (!center || double.IsNaN(dialog.Height)) { return; }
         var width = (int)Math.Ceiling(dialog.Width * scaling);
         var height = (int)Math.Ceiling((dialog.Height + 40) * scaling);
         var x = owner is null ? area.X + (area.Width - width) / 2

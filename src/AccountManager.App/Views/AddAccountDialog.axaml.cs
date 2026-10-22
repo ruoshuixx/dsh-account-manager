@@ -11,6 +11,7 @@ public partial class AddAccountDialog : Window
     public AddAccountDialog()
     {
         InitializeComponent();
+        DialogWindowBounds.KeepOnScreen(this);
         Closing += (_, e) =>
         {
             if (DataContext is AddAccountViewModel { IsSaving: true } vm)
@@ -26,6 +27,7 @@ public partial class AddAccountDialog : Window
         var dialog = new AddAccountDialog();
         await using var vm = new AddAccountViewModel(services, new DialogService(() => dialog));
         dialog.DataContext = vm;
+        DialogWindowBounds.Fit(dialog, owner, center: true);
         vm.CloseRequested += (_, _) => dialog.Close();
         dialog.Opened += async (_, _) => await vm.PrimeAuthorizationAsync();
         await dialog.ShowDialog(owner);
