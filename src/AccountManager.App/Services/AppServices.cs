@@ -39,6 +39,8 @@ public sealed class AppServices : IAddAccountServices
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
         SubagentRoutes = new SubagentRouteService(() => Backend.Home, Backups, Secrets, Log);
         Backend.Subagents = SubagentRoutes;
+        CodexFast = new CodexFastService(() => Backend.Home, Backups, Secrets, Log, SubagentRoutes);
+        Backend.Fast = CodexFast;
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
         Switch = new SwitchService(Backend, Mapper);
@@ -51,7 +53,7 @@ public sealed class AppServices : IAddAccountServices
 
         Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References);
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
-        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, SubagentRoutes);
+        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, SubagentRoutes, CodexFast);
     }
 
     public AppSettings Settings { get; }
@@ -74,6 +76,8 @@ public sealed class AppServices : IAddAccountServices
     public ReferenceService References { get; }
 
     public SubagentRouteService SubagentRoutes { get; }
+
+    public CodexFastService CodexFast { get; }
 
     public BackupService Backups { get; }
 

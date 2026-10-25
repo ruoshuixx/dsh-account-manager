@@ -15,6 +15,16 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
+  <!-- The Codex Fast plugin ships inside the program (single file exe / deb) and is copied into a dsh profile on demand. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\plugins\dsh-account-manager-fast\package.json" LogicalName="fast-plugin/package.json" />
+    <EmbeddedResource Include="..\..\plugins\dsh-account-manager-fast\cordis.patch.yml" LogicalName="fast-plugin/cordis.patch.yml" />
+    <EmbeddedResource Include="..\..\plugins\dsh-account-manager-fast\lib\index.js" LogicalName="fast-plugin/lib/index.js" />
+    <EmbeddedResource Include="..\..\plugins\dsh-account-manager-fast\lib\fast.js" LogicalName="fast-plugin/lib/fast.js" />
+    <EmbeddedResource Include="..\..\plugins\dsh-account-manager-fast\LICENSE" LogicalName="fast-plugin/LICENSE" />
+    <EmbeddedResource Include="..\..\plugins\dsh-account-manager-fast\README.md" LogicalName="fast-plugin/README.md" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="AccountManager.Core.Tests" />
     <InternalsVisibleTo Include="AccountManager.Linux.IntegrationHarness" />

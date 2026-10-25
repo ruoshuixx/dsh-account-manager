@@ -43,6 +43,32 @@ public static partial class CodexCatalog
         return ids;
     }
 
+    /// <summary>The chat models of the catalog by id (a clone of each catalog entry); empty when the text is not the catalog.</summary>
+    public static IReadOnlyDictionary<string, JsonObject> ParseChatModels(string json)
+    {
+        var models = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject root) { return models; }
+            foreach (var (_, group) in root)
+            {
+                if (group is not JsonObject entries) { continue; }
+                foreach (var (key, model) in entries)
+                {
+                    if (model is not JsonObject m) { continue; }
+                    var type = (m["type"] as JsonValue)?.TryGetValue<string>(out var t) == true ? t : null;
+                    var isChat = type is null ? key.StartsWith("chat:", StringComparison.Ordinal) : type == "chat";
+                    if (!isChat) { continue; }
+                    var id = (m["id"] as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
+                    if (string.IsNullOrWhiteSpace(id) && key.StartsWith("chat:", StringComparison.Ordinal)) { id = key["chat:".Length..]; }
+                    if (!string.IsNullOrWhiteSpace(id) && !models.ContainsKey(id)) { models[id] = (JsonObject)m.DeepClone(); }
+                }
+            }
+        }
+        catch (JsonException) { models.Clear(); }
+        return models;
+    }
+
     /// <summary>The catalog file below a <c>node_modules</c> directory, or null. Also looks inside pnpm's <c>.pnpm</c> store.</summary>
     public static string? FindInNodeModules(string nodeModules)
     {
@@ -182,5 +208,18 @@ public static partial class CodexCatalog
             return info.Length > 8 * 1024 * 1024 ? Array.Empty<string>() : ParseChatModelIds(File.ReadAllText(file));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Array.Empty<string>(); }
+    }
+
+    /// <summary>Reads the chat models of the located catalog by id; empty when it cannot be found or read.</summary>
+    public static IReadOnlyDictionary<string, JsonObject> ReadChatModels(IEnumerable<string> roots)
+    {
+        var file = Locate(roots);
+        if (file is null) { return new Dictionary<string, JsonObject>(); }
+        try
+        {
+            var info = new FileInfo(file);
+            return info.Length > 8 * 1024 * 1024 ? new Dictionary<string, JsonObject>() : ParseChatModels(File.ReadAllText(file));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new Dictionary<string, JsonObject>(); }
     }
 }

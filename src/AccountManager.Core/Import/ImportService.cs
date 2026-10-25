@@ -105,10 +105,12 @@ public sealed class ImportService
     private readonly SubscriptionStore? _subscriptions;
     private readonly ReferenceService? _references;
     private readonly SubagentRouteService? _subagents;
+    private readonly CodexFastService? _fast;
 
     public ImportService(IAccountBackend api, BackupService backups, SecretRegistry secrets, AppLog log, SubscriptionStore? subscriptions = null,
-        ReferenceService? references = null, SubagentRouteService? subagents = null)
+        ReferenceService? references = null, SubagentRouteService? subagents = null, CodexFastService? fast = null)
     {
+        _fast = fast;
         _references = references;
         _subagents = subagents;
         _api = api;
@@ -223,6 +225,7 @@ public sealed class ImportService
     public async Task<ImportResult> ImportAsync(ImportPreview preview, CancellationToken cancellationToken = default)
     {
         if (preview is null) { throw new DshException("缺少导入预览数据。"); }
+        _ = _fast?.TakePendingLines(); // changes remembered from earlier activations belong to earlier operations
         if (preview.Payload is not List<ImportRow> rows) { throw new DshException("导入预览数据无效；请重新预览。"); }
 
         if (preview.SelectedKeys is not null)
@@ -517,6 +520,7 @@ public sealed class ImportService
         }
 
         await ApplyRepairsAsync(preview, apiTargets, messages, cancellationToken).ConfigureAwait(false);
+        await SyncFastModelsAsync(preview, messages, cancellationToken).ConfigureAwait(false);
         await MergeSubagentRoutesAsync(preview, credentials, messages, cancellationToken).ConfigureAwait(false);
 
         Report(messages, "完成。失败或需检查：" + failed + "。保存成功不代表令牌/API 已联网验证。", failed > 0 ? LogLevel.Warn : LogLevel.Info);
@@ -706,6 +710,30 @@ public sealed class ImportService
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { _log.Warn("无法预先规划引用修复：" + _secrets.Redact(ex.Message)); }
+    }
+
+    /// <summary>
+    /// Codex Fast mode after every import that touched accounts or providers: the small component is installed or updated in the dsh
+    /// profile and the missing <c>-fast</c> models are appended to the <c>openai-codex</c> route (see <see cref="CodexFastService"/>).
+    /// The route work above has already run, so a route the import just created is picked up. Runs before the subagent merge, which
+    /// leaves Fast models out. The default model is never changed.
+    /// </summary>
+    private async Task SyncFastModelsAsync(ImportPreview preview, List<string> messages, CancellationToken ct)
+    {
+        if (_fast is null || preview.SubscriptionOnly) { return; }
+        try
+        {
+            var current = await _api.GetCredentialsAsync(ct).ConfigureAwait(false);
+            var result = await Task.Run(() => _fast.Sync(current), ct).ConfigureAwait(false);
+            var lines = _fast.TakePendingLines().Concat(CodexFastService.Describe(result)).Distinct(StringComparer.Ordinal).ToList();
+            foreach (var line in lines) { Report(messages, line, LogLevel.Info); }
+            if (result.Note.Length > 0 && !result.Changed) { Report(messages, result.Note, LogLevel.Warn); }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Report(messages, "未能设置 Codex Fast：" + ex.Message, LogLevel.Warn);
+        }
     }
 
     /// <summary>

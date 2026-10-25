@@ -471,6 +471,14 @@ print(f"LINUX_FACTS assembly=App methods={len(required)} skipped=0 failed=0")
 PY
 grep -E '^(TEST_RESULTS|LINUX_FACTS) ' "$logs/verify-app-linux-facts.log"
 
+# The Codex Fast plugin shipped inside the program has its own unit tests (node:test, no dependencies). They need Node.js 22+,
+# which this script does not otherwise require, so they are skipped when it is not installed.
+if node_command="$(command -v node 2>/dev/null)" && [[ "$("$node_command" -p 'process.versions.node.split(".")[0]' 2>/dev/null)" -ge 22 ]]; then
+    run_logged fast-plugin-node-tests env -i "${common_environment[@]}" "$node_command" --test "$root_dir/plugins/dsh-account-manager-fast/test/fast.test.mjs"
+else
+    printf 'CHECK name=fast-plugin-node-tests status=SKIPPED (node 22+ not found)\n'
+fi
+
 version_one='91.4.1'
 version_two='91.4.2'
 publish_harness_bundle() {

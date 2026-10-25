@@ -1,0 +1,46 @@
+{
+  "name": "dsh-account-manager-fast",
+  "version": "0.1.0",
+  "description": "Codex Fast mode for DeepSeek Harness: models whose id ends in -fast are sent as the base model with the priority service tier",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/fast.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0",
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "openai-codex",
+    "fast-mode"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm-pi-ai": ">=0.2.1-rc.2 <0.3.0-0"
+  },
+  "scripts": {
+    "test": "node --test test/fast.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ruoshuixx/dsh-account-manager.git",
+    "directory": "plugins/dsh-account-manager-fast"
+  }
+}

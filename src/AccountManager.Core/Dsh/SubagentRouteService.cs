@@ -102,7 +102,8 @@ public sealed class SubagentRouteService
                 listed = (catalog.Count == 0 ? OfficialCodexModels : OfficialCodexModels.Where(catalog.Contains)).ToList();
             }
 
-            foreach (var model in listed) { Add(ProviderViewMapper.CodexRouteId, model); }
+            // Fast twins are not offered to child agents: they spend the subscription 2.5 times as fast, which a delegating agent should not do unasked.
+            foreach (var model in listed.Where(m => !m.EndsWith(CodexFastService.FastSuffix, StringComparison.Ordinal))) { Add(ProviderViewMapper.CodexRouteId, model); }
         }
 
         return routes;

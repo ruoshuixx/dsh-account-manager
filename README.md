@@ -35,6 +35,12 @@
   没有列出时用官方当前的 `gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`（能找到 dsh 自带的模型目录时，只保留目录里有的；不会加入 gpt-6-sol、gpt-5.6 系列或已下线的 gpt-5.5 / gpt-5.3-codex-spark）。
   你自己加的条目不会被改动或删除，也不会写入重复项；写入前先加密备份并在锁内回读校验。结果只出现在导入结果和运行日志里。
   **改动只对 dsh 里的新对话生效**：请在 dsh 中新建对话后，再让主代理调用子代理。
+- **Codex Fast 模式（不需要任何第三方插件）**：dsh 本身没有“服务档位”设置，所以本工具自带一个只有几十行的小插件 `dsh-account-manager-fast`（MIT，源码在 `plugins/dsh-account-manager-fast/`，已打包进程序）。
+  每次**导入**成功后（以及切号时首次启用 Codex 路由时），如果 `openai-codex` 路由里有 `gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，本工具会：① 把这个插件装进 dsh 档案（`<DSH_HOME>/profiles/<档案>/node_modules/dsh-account-manager-fast/`，并把它的名字追加到档案 `package.json` 的 `dsh.profile.bundles`；不需要 dsh 命令行、pnpm 或联网，写之前先加密备份 `package.json`，其余字节一个不动）；② 在路由里补上 `gpt-6.1-sol-fast`、`gpt-6-astra-fast`、`gpt-6-luna-fast`（名字是“… (Fast)”，上下文、输出上限、输入类型和推理档位照搬基础模型）。
+  选这些 `-fast` 模型时，请求会以基础模型发出并带上 `service_tier: "priority"`（Codex 的 Fast 模式）；其他请求不受影响。不会改默认模型，也不会把 `-fast` 模型交给子代理候选。
+  **首次安装需要完全退出 DSH 再打开**，Fast 模型才可用（dsh 只在启动时读取插件列表）。**Fast 按官方规则以 2.5 倍消耗订阅额度。**
+  只在组件装好并列在档案里时才会有 `-fast` 模型；组件缺失或装不上时，本工具会把它自己写入的 `-fast` 模型再移除（避免把 `-fast` 模型名原样发给 OpenAI），你自己写的条目不动。档案还没有 `package.json`（dsh 从没启动过）或它的格式不认识时会拒绝安装并说明原因。
+  手动移除：删除 `<DSH_HOME>/profiles/<档案>/node_modules/dsh-account-manager-fast/` 文件夹，从 `package.json` 的 `dsh.profile.bundles` 里去掉 `"dsh-account-manager-fast"`，再删掉路由里的 `*-fast` 模型，重启 dsh。
 - **加密账号库与备份**：账号保存在加密文件里（Windows 用 DPAPI，Linux 用 AES-GCM + 0600 密钥文件）；每次写入前都先做加密备份。
 - **其他**：添加账号（OpenAI OAuth 浏览器授权 / 添加 API）、托盘常驻、多选、已脱敏的运行日志、程序内升级。
 

@@ -71,7 +71,8 @@ internal sealed class DshFixture : IDisposable
 {
     public const string Profile = "tauri";
 
-    public DshFixture(string? credentials = null, string? patch = null, IProviderRuntimeVerifier? verifier = null, string? composedBundle = null, IReadOnlyList<string>? codexCatalog = null, bool subagents = false)
+    public DshFixture(string? credentials = null, string? patch = null, IProviderRuntimeVerifier? verifier = null, string? composedBundle = null, IReadOnlyList<string>? codexCatalog = null, bool subagents = false,
+        bool fast = false, string? packageJson = null, IReadOnlyDictionary<string, JsonObject>? catalogModels = null)
     {
         Root = Path.Combine(Path.GetTempPath(), "dshF-" + Guid.NewGuid().ToString("N")[..10]);
         HomeDir = Path.Combine(Root, "dsh");
@@ -79,6 +80,7 @@ internal sealed class DshFixture : IDisposable
         Directory.CreateDirectory(Path.Combine(HomeDir, "profiles", Profile));
         if (credentials is not null) { WriteSecret(CredentialsPath, credentials); }
         File.WriteAllText(PatchPath, patch ?? "[]\n");
+        if (packageJson is not null) { File.WriteAllText(PackageJsonPath, packageJson); }
 
         Secrets = new SecretRegistry(applyLongValueFilter: false);
         Log = new AppLog(Secrets, Path.Combine(Root, "logs"));
@@ -92,11 +94,13 @@ internal sealed class DshFixture : IDisposable
         References = new ReferenceService(Backend, Dumper, Backups, Secrets, Log);
         Subagents = new SubagentRouteService(() => Home, Backups, Secrets, Log, () => codexCatalog ?? Array.Empty<string>());
         if (subagents) { Backend.Subagents = Subagents; }
+        Fast = new CodexFastService(() => Home, Backups, Secrets, Log, Subagents, () => catalogModels ?? new Dictionary<string, JsonObject>());
+        if (fast) { Backend.Fast = Fast; }
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
         Switch = new SwitchService(Backend, Mapper);
         Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References);
-        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, subagents ? Subagents : null);
+        Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, subagents ? Subagents : null, fast ? Fast : null);
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
     }
 
@@ -116,6 +120,9 @@ internal sealed class DshFixture : IDisposable
     public FakeDumper Dumper { get; }
     public ReferenceService References { get; }
     public SubagentRouteService Subagents { get; }
+    public CodexFastService Fast { get; }
+    public string PackageJsonPath => Path.Combine(HomeDir, "profiles", Profile, "package.json");
+    public string PluginDir => Path.Combine(HomeDir, "profiles", Profile, "node_modules", FastComponentInstaller.PackageName);
     public AccountMapper Mapper { get; }
     public AccountSnapshotService Snapshot { get; }
     public SwitchService Switch { get; }

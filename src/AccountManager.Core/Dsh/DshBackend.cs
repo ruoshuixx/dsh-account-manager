@@ -56,6 +56,9 @@ public sealed class DshBackend : IAccountBackend
     /// </summary>
     public SubagentRouteService? Subagents { get; set; }
 
+    /// <summary>Codex Fast mode (component + <c>-fast</c> models); set by the composition root, absent in tests that do not need it.</summary>
+    public CodexFastService? Fast { get; set; }
+
     public AccountVault Vault => _vault;
 
     /// <summary>Points the backend at another DSH home / profile (Settings).</summary>
@@ -370,10 +373,12 @@ public sealed class DshBackend : IAccountBackend
             if (added)
             {
                 _log?.Info("已在 dsh 供应商配置中启用内置 Codex 路由（openai-codex）并写入官方现行 Codex 模型，dsh 会自动热加载。");
+                SyncFastModels();
                 MergeSubagentRoutes();
             }
             else if (Subagents?.UpgradeEmptyCodexRoute() == true)
             {
+                SyncFastModels();
                 MergeSubagentRoutes();
             }
         }
@@ -381,6 +386,21 @@ public sealed class DshBackend : IAccountBackend
         {
             // The grant is written; only the route registration failed.
             _log?.Warn("Codex 凭据已写入，但未能在供应商配置中启用 openai-codex 路由：" + _secrets.Redact(ex.Message));
+        }
+    }
+
+    private void SyncFastModels()
+    {
+        if (Fast is null) { return; }
+        try
+        {
+            var result = Fast.Sync();
+            Fast.Remember(result);
+            foreach (var line in CodexFastService.Describe(result)) { _log?.Info(line); }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.Warn("未能设置 Codex Fast 模型：" + _secrets.Redact(ex.Message));
         }
     }
 
