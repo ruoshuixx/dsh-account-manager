@@ -72,7 +72,8 @@ internal sealed class DshFixture : IDisposable
     public const string Profile = "tauri";
 
     public DshFixture(string? credentials = null, string? patch = null, IProviderRuntimeVerifier? verifier = null, string? composedBundle = null, IReadOnlyList<string>? codexCatalog = null, bool subagents = false,
-        bool fast = false, string? packageJson = null, IReadOnlyDictionary<string, JsonObject>? catalogModels = null)
+        bool fast = false, string? packageJson = null, IReadOnlyDictionary<string, JsonObject>? catalogModels = null,
+        CodexModelCatalogClient? codexClient = null, CodexModelOwnership? ownership = null)
     {
         Root = Path.Combine(Path.GetTempPath(), "dshF-" + Guid.NewGuid().ToString("N")[..10]);
         HomeDir = Path.Combine(Root, "dsh");
@@ -94,7 +95,7 @@ internal sealed class DshFixture : IDisposable
         References = new ReferenceService(Backend, Dumper, Backups, Secrets, Log);
         Subagents = new SubagentRouteService(() => Home, Backups, Secrets, Log, () => codexCatalog ?? Array.Empty<string>());
         if (subagents) { Backend.Subagents = Subagents; }
-        Fast = new CodexFastService(() => Home, Backups, Secrets, Log, Subagents, () => catalogModels ?? new Dictionary<string, JsonObject>());
+        Fast = new CodexFastService(() => Home, Backups, Secrets, Log, Subagents, () => catalogModels ?? new Dictionary<string, JsonObject>(), codexClient, ownership);
         if (fast) { Backend.Fast = Fast; }
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);

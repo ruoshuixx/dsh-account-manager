@@ -385,9 +385,9 @@ public class CodexFastTests
 
         var result = f.Fast.Sync();
 
-        Assert.Equal(3, result.AddedModels.Count);
+        Assert.Equal(4, result.AddedModels.Count); // the built-in list has four models, each gets a twin
         var ids = ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels().Select(m => m.Id).ToArray();
-        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol-fast", "gpt-6-astra-fast", "gpt-6-luna-fast" }, ids);
+        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol-fast", "gpt-6.1-terra-fast", "gpt-6-astra-fast", "gpt-6-luna-fast" }, ids);
     }
 
     [Fact]
@@ -404,7 +404,7 @@ public class CodexFastTests
         var ids = ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels().Select(m => m.Id).ToArray();
         Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6-astra-fast" }, ids);
         Assert.Contains("name: Mine, not ours", f.Patch);
-        Assert.Contains("避免把 -fast", f.RunLog);
+        Assert.Contains("移除本工具写入的模型", f.RunLog);
     }
 
     [Fact]
@@ -464,11 +464,11 @@ public class CodexFastTests
 
         Assert.Equal(0, result.Failed);
         var ids = ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels().Select(m => m.Id).ToArray();
-        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol-fast", "gpt-6-astra-fast", "gpt-6-luna-fast" }, ids);
+        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol-fast", "gpt-6.1-terra-fast", "gpt-6-astra-fast", "gpt-6-luna-fast" }, ids);
         Assert.Equal(FastComponentState.Installed, f.Fast.Installer.GetStatus().State);
         Assert.DoesNotContain("agent-default-model", f.Patch);
         var routes = ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection().Routes;
-        Assert.Equal(3, routes.Count);
+        Assert.Equal(4, routes.Count);
         Assert.DoesNotContain(routes, r => r.Model.EndsWith("-fast"));
 
         // The activation already did the work (before the import's own step), so the report may be in the log; the message is in one of them.

@@ -35,6 +35,10 @@
   没有列出时用官方当前的 `gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`（能找到 dsh 自带的模型目录时，只保留目录里有的；不会加入 gpt-6-sol、gpt-5.6 系列或已下线的 gpt-5.5 / gpt-5.3-codex-spark）。
   你自己加的条目不会被改动或删除，也不会写入重复项；写入前先加密备份并在锁内回读校验。结果只出现在导入结果和运行日志里。
   **改动只对 dsh 里的新对话生效**：请在 dsh 中新建对话后，再让主代理调用子代理。
+- **Codex 模型跟着账号走**：每次**导入**成功后（以及首次启用 Codex 路由时），本工具用当前 dsh 账号的访问令牌向 OpenAI 询问这个账号能用哪些 Codex 模型（一次只读 `GET https://chatgpt.com/backend-api/codex/models`，和 Codex 自己的请求一样；令牌必须还有 10 分钟以上有效期，否则用账号库里另一个未过期账号的令牌，**绝不刷新令牌**；没有可用令牌就跳过并说明）。
+  选择规则（你定的）：OpenAI 标为可见（`visibility: list`）、接受文本输入的模型全部采用，**排除旧模型 `gpt-6-sol` 和所有 `gpt-5*`**，按 OpenAI 给的优先级排序；每个支持 Fast 的模型再配一个“(Fast)”孪生（见下一条）。今天的结果是 `gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-luna`，各带 Fast。
+  路由里缺的模型会追加进 `openai-codex` 的 `models` 列表：dsh 自带目录里有的写成只有 id；目录里没有的（例如新模型 `gpt-6.1-terra`）带上名字、上下文长度、输入类型和推理档位（OpenAI 没给最大输出，按 128000；dsh 不认识的档位如 `ultra` 会丢掉）。
+  本工具记住自己写过哪些模型（`codex-models-state.json`；0.1.3 / 0.1.4 写的也算）。账号不再提供、或落入排除规则的，会连同孪生一起移除——但仍被默认模型等设置引用的不移除（只在结果和日志里说明）；你自己写的条目永远不动。取不到清单时（没有令牌、断网、接口变了）现有模型原样保留；新建的路由先用内置清单（上面四个）。导入结果里有一行“已从 OpenAI 获取账号可用模型：…；新增 …；移除 …”，或“未能获取账号模型清单（原因），保持现有模型不变”。不会改默认模型；子代理候选是这些基础模型（不含 Fast）。
 - **Codex Fast 模式（不需要任何第三方插件）**：dsh 本身没有“服务档位”设置，所以本工具自带一个只有几十行的小插件 `dsh-account-manager-fast`（MIT，源码在 `plugins/dsh-account-manager-fast/`，已打包进程序）。
   每次**导入**成功后（以及切号时首次启用 Codex 路由时），如果 `openai-codex` 路由里有 `gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，本工具会：① 把这个插件装进 dsh 档案（`<DSH_HOME>/profiles/<档案>/node_modules/dsh-account-manager-fast/`，并把它的名字追加到档案 `package.json` 的 `dsh.profile.bundles`；不需要 dsh 命令行、pnpm 或联网，写之前先加密备份 `package.json`，其余字节一个不动）；② 在路由里补上 `gpt-6.1-sol-fast`、`gpt-6-astra-fast`、`gpt-6-luna-fast`（名字是“… (Fast)”，上下文、输出上限、输入类型和推理档位照搬基础模型）。
   选这些 `-fast` 模型时，请求会以基础模型发出并带上 `service_tier: "priority"`（Codex 的 Fast 模式）；其他请求不受影响。不会改默认模型，也不会把 `-fast` 模型交给子代理候选。

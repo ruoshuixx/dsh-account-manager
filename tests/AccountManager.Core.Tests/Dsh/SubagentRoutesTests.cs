@@ -274,7 +274,7 @@ public class SubagentRoutesTests
         var routes = f.Subagents.ComputeCandidates(ProfilePatchDocument.Load(f.PatchPath));
 
         Assert.Equal(SubagentRouteService.OfficialCodexModels.Select(m => R("openai-codex", m)), routes);
-        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna" }, SubagentRouteService.OfficialCodexModels);
+        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna" }, SubagentRouteService.OfficialCodexModels);
         Assert.DoesNotContain(routes, r => r.Model is "gpt-6-sol" or "gpt-5.5" or "gpt-5.3-codex-spark" || r.Model.StartsWith("gpt-5.6", StringComparison.Ordinal));
     }
 
@@ -312,12 +312,12 @@ public class SubagentRoutesTests
 
         Assert.True(first.Changed);
         Assert.True(first.EnabledChanged);
-        Assert.Equal(5, first.Added.Count);
+        Assert.Equal(6, first.Added.Count);
         Assert.True(File.Exists(first.Backup));
         var state = ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection();
         Assert.True(state.Enabled);
         Assert.Equal(R("deepseek-official", "deepseek-flash"), state.Routes[0]); // the user's entry stays first and untouched
-        Assert.Equal(6, state.Routes.Count);
+        Assert.Equal(7, state.Routes.Count);
         Assert.Contains("新对话", f.RunLog);
         var backupsAfterFirst = f.Backups.ListBackups().Count;
 
@@ -325,7 +325,7 @@ public class SubagentRoutesTests
 
         Assert.False(second.Changed);
         Assert.Equal(backupsAfterFirst, f.Backups.ListBackups().Count);
-        Assert.Equal(6, ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection().Routes.Count);
+        Assert.Equal(7, ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection().Routes.Count);
     }
 
     [Fact]
@@ -341,7 +341,8 @@ public class SubagentRoutesTests
 
     // ---- upgrading the empty openai-codex entry 0.1.2 wrote ----
 
-    private const string OfficialBlock = "      openai-codex:\n        models:\n          - id: gpt-6.1-sol\n          - id: gpt-6-astra\n          - id: gpt-6-luna\n";
+    // The built-in list: ids only where dsh's catalog has the model, explicit facts for gpt-6.1-terra (not in dsh 0.2.1's catalog).
+    private const string OfficialBlock = "      openai-codex:\n        models:\n          - id: gpt-6.1-sol\n          - id: gpt-6.1-terra\n";
 
     [Fact]
     public void AnEmptyMappingCodexEntryIsUpgradedToTheOfficialModelsAfterABackup()
@@ -351,7 +352,8 @@ public class SubagentRoutesTests
         var upgraded = f.Subagents.UpgradeEmptyCodexRoute();
 
         Assert.True(upgraded);
-        Assert.Equal(Providers + OfficialBlock, f.Patch);
+        Assert.StartsWith(Providers + OfficialBlock, f.Patch);
+        Assert.Equal(SubagentRouteService.OfficialCodexModels, ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels().Select(m => m.Id).ToArray());
         Assert.Single(f.Backups.ListBackups());
         Assert.Contains("openai-codex 路由原来是空条目", f.RunLog);
         Assert.False(f.Subagents.UpgradeEmptyCodexRoute()); // second time: nothing to do, no new backup
@@ -365,7 +367,8 @@ public class SubagentRoutesTests
 
         Assert.True(f.Subagents.UpgradeEmptyCodexRoute());
 
-        Assert.Equal(Providers + OfficialBlock, f.Patch);
+        Assert.StartsWith(Providers + OfficialBlock, f.Patch);
+        Assert.Equal(SubagentRouteService.OfficialCodexModels, ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels().Select(m => m.Id).ToArray());
     }
 
     [Fact]
@@ -400,7 +403,7 @@ public class SubagentRoutesTests
         var result = f.Subagents.Merge();
 
         Assert.Contains(OfficialBlock, f.Patch);
-        Assert.Equal(5, result.Added.Count);
+        Assert.Equal(6, result.Added.Count);
         Assert.Equal(SubagentRouteService.OfficialCodexModels.Select(m => R("openai-codex", m)), result.Added.Where(r => r.Provider == "openai-codex"));
     }
 
@@ -412,7 +415,7 @@ public class SubagentRoutesTests
         await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
 
         Assert.Contains(OfficialBlock, f.Patch);
-        Assert.Equal(3, ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection().Routes.Count(r => r.Provider == "openai-codex"));
+        Assert.Equal(4, ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection().Routes.Count(r => r.Provider == "openai-codex"));
     }
 
     // ---- import and Codex activation ----
@@ -478,7 +481,7 @@ public class SubagentRoutesTests
 
         var routes = ProfilePatchDocument.Load(f.PatchPath).GetSubagentSelection();
         Assert.True(routes.Enabled);
-        Assert.Equal(3, routes.Routes.Count);
+        Assert.Equal(4, routes.Routes.Count);
         Assert.Contains("子代理可用模型", f.RunLog);
     }
 

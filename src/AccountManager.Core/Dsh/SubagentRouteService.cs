@@ -24,22 +24,20 @@ public sealed class SubagentRouteService
     public const string NewConversationNote = "改动只对 dsh 里的新对话生效：请在 dsh 中新建对话后，再让主代理调用子代理。";
 
     /// <summary>
-    /// The Codex models this tool offers for ChatGPT sign-in, recommended first. Source: OpenAI's Codex models page
-    /// (https://learn.chatgpt.com/docs/models), checked 2026-10-20; the selection of these three was chosen by the user.
-    /// Deliberately left out: gpt-6-sol, the gpt-5.6 family, and the retired gpt-5.5 / gpt-5.3-codex-spark that dsh's
-    /// bundled catalog still lists. Used for the explicit <c>models</c> list of a newly created (or empty)
-    /// <c>openai-codex</c> route and for the subagent <c>allowedModels</c>. Update this list when the page changes.
+    /// The built-in Codex models (<see cref="CodexBuiltInModels"/>): what a newly created (or empty) <c>openai-codex</c> route lists
+    /// until OpenAI's own list for the account can be fetched, which then decides (see <see cref="CodexModelPolicy"/>: everything the
+    /// account lists except gpt-6-sol and the gpt-5 family, the user's rule of 2026-10-26). Update the table when a model is added.
     /// </summary>
-    public static readonly IReadOnlyList<string> OfficialCodexModels = new[] { "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna" };
+    public static readonly IReadOnlyList<string> OfficialCodexModels = CodexBuiltInModels.Ids;
 
     /// <summary>
     /// The <c>openai-codex</c> provider entry this tool writes: an explicit <c>models</c> list of
-    /// <see cref="OfficialCodexModels"/>, ids only (dsh fills in name, limits and input from its catalog).
+    /// <see cref="OfficialCodexModels"/>: ids only where dsh's catalog has the model, explicit facts for the others.
     /// </summary>
     public static JsonObject OfficialCodexRoute()
     {
         var models = new JsonArray();
-        foreach (var id in OfficialCodexModels) { models.Add(new JsonObject { ["id"] = id }); }
+        foreach (var model in CodexBuiltInModels.All) { models.Add(CodexBuiltInModels.RouteEntry(model)); }
         return new JsonObject { ["models"] = models };
     }
 

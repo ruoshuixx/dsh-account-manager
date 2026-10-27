@@ -112,7 +112,18 @@ dsh 的设置里有些地方按 `provider` + `model` 点名某个 LLM 路由（�
 * 时机：每次导入成功后（站在供应商 / 路由工作之后、子代理合并之前），以及 `EnsureCodexRoute` 新建路由时。结果写进导入结果和日志；首次装好 / 更新组件时说明要完全退出 DSH 再打开，并说明 2.5 倍消耗。不改默认模型，不加界面。子代理候选（`SubagentRouteService`）排除 `-fast`，用户自己写在 `allowedModels` 里的不动。
 * 风险：dsh 只在启动时读取插件列表，装好后必须完全退出再打开；Windows 上 dsh 运行时第一次安装只新增文件和改一个 JSON（原子 rename），但若要“更新”已被 dsh 载入的组件文件，写入可能被占用，此时报错并提示先退出 dsh；桌面应用若在更新时重写自己的档案 `package.json`，列表项可能被去掉，本工具每次导入都会重新检查并补回，被去掉期间会自动移除 `-fast` 模型；dsh 升级到 `engines.dsh` 范围之外时 dsh 会跳过组件，同样会让 `-fast` 模型被移除；插件靠 `PiAiAdapter.streamWithSnapshot` 这个内部方法工作（rc.2 与 rc.3 的实现逐字节相同），方法变了插件会加载失败而不是悄悄失效。
 
-## 10. 已知限制
+## 10. Codex 模型清单（跟着账号走）
+
+* 接口：`CodexModelCatalogClient`——一次只读 `GET https://chatgpt.com/backend-api/codex/models?client_version=0.159.0`，头 `authorization: Bearer <access>`、`chatgpt-account-id`、`accept: application/json`、`originator: pi`（dsh 自己的 Codex 请求用的值）、`user-agent: dsh-account-manager/<版本>`；和额度查询同样的 `HttpClient`（环境代理照常生效），不跟随重定向，15 秒超时，响应上限 1 MB，失败只给固定的安全文字（不含令牌或响应体，日志里也没有令牌）。解析宽松：每个模型取 `slug`、`display_name`、`visibility`、`priority`、`context_window`、`input_modalities`、`supported_reasoning_levels[].effort`、`service_tiers[].id` / `additional_speed_tiers`（含 `priority` 或 `fast` 即支持 Fast）；没有最大输出字段。
+* 令牌：只用已有的访问令牌，**从不刷新**（刷新会轮换 refresh token，同一账号在别处会失效）。优先 dsh 当前账号，有效期至少还剩 10 分钟；否则账号库里别的账号、未过期（至少 1 分钟）的；都没有就跳过并说明。
+* 选择（`CodexModelPolicy`，你 2026-10-26 定的规则）：`visibility == "list"`、输入含 `text`，排除精确 `gpt-6-sol` 和前缀 `gpt-5`，按 `priority` 升序（稳定）。显示名规范化：`GPT-6-Astra` → `GPT-6 Astra`。
+* 写路由（`CodexFastService.Sync`，J2 的 `ProfilePatchDocument` 路由操作）：缺的基础模型追加到 `openai-codex.models`。dsh 自带的 pi-ai 目录（`CodexCatalog`；读不到时用内置的 rc.2 目录 id 表）认识的 id 只写 `- id:`，让 dsh 用目录里完整的信息（包括不能在配置里设置的 compat 开关）；不认识的写明确的 `name`、`contextWindow`、`maxTokens`（128000，来源见 `CodexBuiltInModels` 注释）、`input`、`reasoningEfforts`——档位只取 dsh 接受的（`off minimal low medium high xhigh max`），值与名字相同，`ultra` 等不认识的丢掉。Fast 孪生沿用 J2：只在组件装好并列出时写，元数据按“用户的基础条目 → dsh 目录 → OpenAI 条目 → 内置表”逐字段取。
+* 所有权：`CodexModelOwnership` 在应用数据目录的 `codex-models-state.json` 里按“DSH_HOME + 档案”记住本工具写过的 id。没有记录时（0.1.3 / 0.1.4 升级上来）把路由里只有 id 的 `gpt-6.1-sol` / `gpt-6-astra` / `gpt-6-luna` 和形状匹配的孪生认作自己的。账号不再提供、或被排除规则命中的自己的模型连同孪生一起移除；仍被 `agent-default-model` 等设置引用的（`ReferenceScanner`）不移除，只在日志和结果里说明，保留的孪生连同它的基础模型一起留着。本工具填写的子代理 `allowedModels` 里指向被移除模型的项一并去掉（否则它们会让模型永远删不掉），之后的子代理合并会补回候选。用户自己写的条目、以及导入后用户手写的 id 都不是本工具的，永远不动。
+* 取不到清单（没有令牌、网络、接口变化、清单里没有可提供的模型）：不改现有列表，只按内置规则维护孪生；新建路由用内置清单 `CodexBuiltInModels`（`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-astra`、`gpt-6-luna`；其中 terra 不在 dsh 目录里，带 2026-10-26 OpenAI 清单里的数据：上下文 500000、文本+图片输入，推理档位取通用的五档）。
+* 时机：每次导入成功后（供应商 / 路由工作之后、子代理合并之前）以及 `EnsureCodexRoute` 新建 / 升级路由时（后者没有令牌，用内置清单）。结果写进导入结果和日志。不改默认模型，不加界面。子代理候选是路由里的基础模型（不含 `-fast`）。
+* 风险：显式条目（如 terra）拿不到目录里的 compat 开关（`supportsToolSearch` 等，dsh 配置不允许设置），dsh 自带目录收录它之后，已写入的显式条目不会被本工具自动改写成只有 id（想要目录里的完整信息，可手动删掉该条目再导入一次）；OpenAI 的清单没有最大输出，128000 是假设；接口、`client_version` 或字段变化会让获取失败（现有模型保持不变）。
+
+## 11. 已知限制
 
 * OAuth 授权请求里的 `originator` 参数使用固定值（`CodexOAuthService`），这是授权服务认可的取值，不要随意更改。
 * Windows 目前只保证编译与单元测试通过。

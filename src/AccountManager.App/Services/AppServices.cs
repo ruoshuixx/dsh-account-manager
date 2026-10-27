@@ -39,7 +39,8 @@ public sealed class AppServices : IAddAccountServices
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
         SubagentRoutes = new SubagentRouteService(() => Backend.Home, Backups, Secrets, Log);
         Backend.Subagents = SubagentRoutes;
-        CodexFast = new CodexFastService(() => Backend.Home, Backups, Secrets, Log, SubagentRoutes);
+        CodexFast = new CodexFastService(() => Backend.Home, Backups, Secrets, Log, SubagentRoutes, null,
+            new CodexModelCatalogClient("dsh-account-manager/" + AppUpdateInfo.DisplayVersion), new CodexModelOwnership(Vault.Directory));
         Backend.Fast = CodexFast;
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);

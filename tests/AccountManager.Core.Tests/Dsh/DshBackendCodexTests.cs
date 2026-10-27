@@ -298,7 +298,12 @@ public class DshBackendCodexTests
         Assert.Equal(new[] { "openai-codex" }, providers.Select(kv => kv.Key).ToArray());
         var models = providers["openai-codex"]!["models"]!.AsArray();
         Assert.Equal(SubagentRouteService.OfficialCodexModels, models.Select(m => m!["id"]!.GetValue<string>()).ToArray());
-        Assert.All(models, m => Assert.Single(m!.AsObject())); // ids only
+        // Models dsh's own catalog has are written id-only; gpt-6.1-terra is not in dsh 0.2.1's catalog and carries its facts.
+        Assert.All(models.Where(m => m!["id"]!.GetValue<string>() != "gpt-6.1-terra"), m => Assert.Single(m!.AsObject()));
+        var terra = models.Single(m => m!["id"]!.GetValue<string>() == "gpt-6.1-terra")!;
+        Assert.Equal("GPT-6.1 Terra", terra["name"]!.GetValue<string>());
+        Assert.Equal(500000, terra["contextWindow"]!.GetValue<int>());
+        Assert.Equal(128000, terra["maxTokens"]!.GetValue<int>());
         Assert.Contains("      openai-codex:\n        models:\n          - id: gpt-6.1-sol\n", f.Patch);
     }
 
