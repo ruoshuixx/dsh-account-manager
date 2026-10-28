@@ -369,6 +369,41 @@ public class DialogTests
         finally { owner.Close(); }
     }
 
+    [AvaloniaFact]
+    public async Task SettingsDialogShowsAndReturnsTheCodexCliRow()
+    {
+        var owner = new Window();
+        owner.Show();
+        try
+        {
+            var pending = SettingsDialog.ShowAsync(owner, new SettingsInput { CodexHome = "/tmp/codex-x", SwitchCodexCliToo = true });
+            var dialog = owner.OwnedWindows.OfType<SettingsDialog>().Single();
+            dialog.UpdateLayout();
+            Assert.Equal("/tmp/codex-x", dialog.FindControl<TextBox>("CodexHomeBox")!.Text);
+            Assert.True(dialog.FindControl<CheckBox>("CliSwitchBox")!.IsChecked);
+            Assert.NotNull(ToolTip.GetTip(dialog.FindControl<TextBox>("CodexHomeBox")!));
+            Assert.Equal(2, dialog.GetVisualDescendants().OfType<Button>().Count(b => b.Content?.ToString() == "浏览…"));
+            dialog.FindControl<CheckBox>("CliSwitchBox")!.IsChecked = false;
+            dialog.FindControl<TextBox>("CodexHomeBox")!.Text = " /tmp/other ";
+            Click(dialog, "保存");
+            var result = await pending;
+            Assert.NotNull(result);
+            Assert.False(result!.SwitchCodexCliToo);
+            Assert.Equal("/tmp/other", result.CodexHome);
+        }
+        finally { owner.Close(); }
+    }
+
+    [Fact]
+    public void SettingsDefaultToSwitchingTheCodexCliToo()
+    {
+        var settings = new AppSettings();
+        Assert.True(settings.SwitchCodexCliToo);
+        Assert.Null(settings.CodexHome);
+        var json = System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"DshHome\":\"x\"}")!;
+        Assert.True(json.SwitchCodexCliToo);
+    }
+
     [AvaloniaTheory]
     [InlineData("上传到云端", SettingsAction.Upload)]
     [InlineData("从云端下载", SettingsAction.Download)]

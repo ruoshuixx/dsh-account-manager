@@ -40,6 +40,11 @@ public sealed class SettingsInput
     /// <summary>Automatically switch accounts when the active one runs out of quota.</summary>
     public bool AutoSwitchAccount { get; init; }
 
+    public bool SwitchCodexCliToo { get; init; } = true;
+
+    /// <summary>CODEX_HOME override; empty = automatic.</summary>
+    public string CodexHome { get; init; } = string.Empty;
+
     // --- WebDAV sync ---
     public string WebDavUrl { get; init; } = string.Empty;
 
@@ -67,6 +72,10 @@ public sealed class SettingsResult
     public int AutoRefreshMinutes { get; init; } = 5;
 
     public bool AutoSwitchAccount { get; init; }
+
+    public bool SwitchCodexCliToo { get; init; } = true;
+
+    public string CodexHome { get; init; } = string.Empty;
 
     // --- WebDAV sync ---
     public string WebDavUrl { get; init; } = string.Empty;

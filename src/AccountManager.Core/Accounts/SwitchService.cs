@@ -39,6 +39,22 @@ public sealed class SwitchService
         }
 
         var account = _mapper.ConvertCredential(credential);
+        if (account.Active && account.CliPending)
+        {
+            // dsh already uses this account; only the Codex CLI file is behind.
+            await _api.ActivateCredentialAsync(id, cancellationToken).ConfigureAwait(false);
+            return new SwitchResult
+            {
+                Changed = false,
+                Label = account.Label,
+                CredentialID = account.CredentialId,
+                Active = true,
+                Status = account.Status,
+                ReauthRequired = account.StatusCode == "Expired",
+                CliNote = _api.LastCodexCliNote,
+            };
+        }
+
         if (account.Active)
         {
             return new SwitchResult
@@ -75,6 +91,7 @@ public sealed class SwitchService
             Active = true,
             Status = account.Status,
             ReauthRequired = account.StatusCode == "Expired",
+            CliNote = _api.LastCodexCliNote,
         };
     }
 }

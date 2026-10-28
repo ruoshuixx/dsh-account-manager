@@ -160,7 +160,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         {
             var snapshot = await Task.Run(() => _services.LoadSnapshotAsync()).ConfigureAwait(true);
             ApplySnapshot(snapshot);
-            StatusText = "已读取 " + snapshot.Accounts.Count + " 个账号。";
+            StatusText = "已读取 " + snapshot.Accounts.Count + " 个账号。" + (_cliNote.Length > 0 ? " · " + _cliNote : string.Empty);
+            _cliNote = string.Empty;
             _ = CheckReferencesAsync();
         }
         catch (Exception ex)
@@ -367,10 +368,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
     // ---- row actions -------------------------------------------------------
 
+    private string _cliNote = string.Empty;
+
     public async Task SwitchAsync(AccountRowViewModel row)
     {
         if (IsBusy) { return; }
-        if (row.Row.Active)
+        if (row.Row.Active && !row.Row.CliPending)
         {
             StatusText = row.Title + " 已经是当前账号。";
             return;
@@ -382,6 +385,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         {
             var result = await Task.Run(() => _services.SwitchAsync(row.Row.CredentialId)).ConfigureAwait(true);
             StatusText = result.Changed ? "已切换并回读确认：" + result.Label : result.Label + " 已是当前账号。";
+            _cliNote = result.CliNote;
+            if (_cliNote.Length > 0) { StatusText += " · " + _cliNote; }
             if (result.ReauthRequired)
             {
                 await _dialogs.ShowWarningAsync("需要重新登录", "该账号的访问令牌已过期：切号只把它写成 dsh 当前的 Codex 凭据，不会自动刷新登录。请先重新授权该账号。");
@@ -1001,6 +1006,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             DetectedProfiles = DshHome.ListProfiles(_services.Home.Root),
             AutoRefreshMinutes = AutoRefreshMinutes,
             AutoSwitchAccount = _services.Settings.AutoSwitchAccount,
+            SwitchCodexCliToo = _services.Settings.SwitchCodexCliToo,
+            CodexHome = _services.Settings.CodexHome ?? string.Empty,
             WebDavUrl = _services.Settings.WebDavUrl ?? string.Empty,
             WebDavUsername = _services.Settings.WebDavUsername ?? string.Empty,
             WebDavPasswordStored = _services.HasWebDavPassword,
@@ -1020,6 +1027,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         UpdateDshStatus();
         if (result.AutoRefreshMinutes > 0) { AutoRefreshMinutes = result.AutoRefreshMinutes; }
         _services.Settings.AutoSwitchAccount = result.AutoSwitchAccount;
+        _services.Settings.SwitchCodexCliToo = result.SwitchCodexCliToo;
+        _services.Settings.CodexHome = string.IsNullOrWhiteSpace(result.CodexHome) ? null : result.CodexHome.Trim();
 
         _services.Settings.WebDavUrl = string.IsNullOrWhiteSpace(result.WebDavUrl) ? null : result.WebDavUrl.Trim();
         _services.Settings.WebDavUsername = string.IsNullOrWhiteSpace(result.WebDavUsername) ? null : result.WebDavUsername.Trim();

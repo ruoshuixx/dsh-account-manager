@@ -88,9 +88,14 @@
         <!-- account identity -->
         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,4,10,4" Spacing="1" ClipToBounds="True">
           <Grid ColumnDefinitions="Auto,*">
-            <Border Classes="chip success" IsVisible="{Binding IsCurrent}" Margin="0,0,6,0">
-              <TextBlock Text="当前" />
-            </Border>
+            <StackPanel Orientation="Horizontal">
+              <Border Classes="chip success" IsVisible="{Binding IsCurrent}" Margin="0,0,6,0">
+                <TextBlock Text="当前" />
+              </Border>
+              <Border Classes="chip accent" IsVisible="{Binding IsCliCurrent}" Margin="0,0,6,0" ToolTip.Tip="Codex CLI 正在使用这个账号（dsh 当前用的是另一个）">
+                <TextBlock Text="CLI" />
+              </Border>
+            </StackPanel>
             <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" FontSize="13.5" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
           </Grid>
           <TextBlock Classes="subtitle" Text="{Binding Subtitle}" IsVisible="{Binding HasSubtitle}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding AccountTooltip}" />

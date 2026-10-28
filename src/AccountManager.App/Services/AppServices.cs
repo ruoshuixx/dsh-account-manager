@@ -34,8 +34,13 @@ public sealed class AppServices : IAddAccountServices
         Vault = new AccountVault(appDataDirectory ?? AccountVault.DefaultDirectory());
         Backups = backupDirectory is null ? new BackupService() : new BackupService(backupDirectory);
         Subscriptions = new SubscriptionStore(Vault.Directory, Log);
+        CodexCli = new CodexCliAuthStore(() => Settings.CodexHome, Backups);
         Verifier = new DshRuntimeVerifier();
-        Backend = new DshBackend(Home, Vault, Secrets, Subscriptions, Log, Verifier);
+        Backend = new DshBackend(Home, Vault, Secrets, Subscriptions, Log, Verifier)
+        {
+            CodexCli = CodexCli,
+            CodexCliEnabled = () => Settings.SwitchCodexCliToo,
+        };
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
         SubagentRoutes = new SubagentRouteService(() => Backend.Home, Backups, Secrets, Log);
         Backend.Subagents = SubagentRoutes;
@@ -71,6 +76,8 @@ public sealed class AppServices : IAddAccountServices
     public AccountVault Vault { get; }
 
     public DshBackend Backend { get; }
+
+    public CodexCliAuthStore CodexCli { get; }
 
     public DshRuntimeVerifier Verifier { get; }
 

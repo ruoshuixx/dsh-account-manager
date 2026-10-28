@@ -131,6 +131,37 @@ internal sealed class DshFixture : IDisposable
     public ImportService Import { get; }
     public ExportService Export { get; }
 
+    public string CodexHome => Path.Combine(Root, "codex");
+    public string CodexAuthPath => Path.Combine(CodexHome, "auth.json");
+    public bool CliEnabled { get; set; } = true;
+
+    /// <summary>Turns the Codex CLI step on, against a temp CODEX_HOME that exists only when <paramref name="createHome"/>.</summary>
+    public CodexCliAuthStore UseCli(bool createHome = true, string? authJson = null)
+    {
+        if (createHome) { Directory.CreateDirectory(CodexHome); }
+        if (authJson is not null) { File.WriteAllText(CodexAuthPath, authJson); }
+        var store = new CodexCliAuthStore(() => CodexHome, Backups, _ => null, () => Root);
+        Backend.CodexCli = store;
+        Backend.CodexCliEnabled = () => CliEnabled;
+        return store;
+    }
+
+    /// <summary>An auth.json as Codex CLI writes it, for a synthetic account.</summary>
+    public static string AuthJson(string email, string accountId, string refresh, long exp = 4102444800L, string lastRefresh = "2026-10-01T10:00:00.123456789Z")
+        => new JsonObject
+        {
+            ["OPENAI_API_KEY"] = null,
+            ["tokens"] = new JsonObject
+            {
+                ["id_token"] = "cli-id-token",
+                ["access_token"] = TestAccounts.AccessToken(email, accountId, exp),
+                ["refresh_token"] = refresh,
+                ["account_id"] = accountId,
+            },
+            ["last_refresh"] = lastRefresh,
+            ["x-unknown"] = new JsonObject { ["keep"] = JsonNode.Parse("[1,2.0,\"three\"]") },
+        }.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n";
+
     public string Credentials => File.Exists(CredentialsPath) ? File.ReadAllText(CredentialsPath) : string.Empty;
     public string Patch => File.ReadAllText(PatchPath);
     public CredentialsDocument CredentialsDoc => CredentialsDocument.Load(CredentialsPath);

@@ -14,6 +14,7 @@
 
 - **切换 dsh 内置的 Codex 账号**：dsh 同一时间只认一个 Codex 账号。本工具把你所有的 Codex 账号保存在自己的加密账号库里，
   点「切号」就把目标账号写成 dsh 当前的 Codex 凭据（dsh 运行中会热加载，不用重启）。
+  - **同时切换 Codex CLI**（设置里的开关，默认开）：切号成功后，把同一个账号也写进 Codex CLI 的 `auth.json`（`$CODEX_HOME/auth.json`，默认 `~/.codex/auth.json`；设置里可改目录）。写之前先加密备份、原子替换并保持 0600、保留文件里其它键，并先把 Codex CLI 自己刷新过的较新令牌写回账号库（用 Codex CLI 自己登录的账号也会先收进账号库）。目录不存在就跳过（不会创建）；凭据存在系统密钥环时只提示不处理；失败不影响 dsh 的切号，状态栏会写“Codex CLI 未同步：原因”。dsh 和 Codex CLI 共用同一份登录令牌，列表里 Codex CLI 用的账号与 dsh 不同时会显示“CLI”标记。
   - 切号前，如果 dsh 已经刷新了当前账号的令牌，会先把**较新**的令牌写回账号库，绝不用旧令牌覆盖新令牌。
   - dsh 里原本登录的、账号库里还没有的账号，会被自动收进账号库并显示为当前账号。
   - 在一个还没有 Codex 路由的档案里切号时，会顺带启用内置的 `openai-codex` 路由并写入官方现行 Codex 模型（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，只写 id；已有的条目不动；只有“完全是空的”条目（0.1.2 写入的 `openai-codex: {}`，没有任何用户选择）会在导入或切号时补全成这份列表，补全前先做加密备份；只要条目里有任何一个键就保持原样）。
@@ -97,6 +98,7 @@ sudo apt remove dsh-account-manager                          # 卸载
 | dsh 当前的 Codex 账号 | `$DSH_HOME/.credentials.yaml` 的 `records["llm-pi-ai/openai-codex"]`（`kind: grant`） |
 | API Key | 同一文件的 `refs.<名称>`（名称 = 供应商的 `apiKeyEnv`；新建供应商用 `<供应商ID大写>_API_KEY`） |
 | API 供应商 | `$DSH_HOME/profiles/<档案>/cordis.patch.yml` 里 `llm-pi-ai` 的 `config.providers.<ID>` |
+| Codex CLI 当前账号（可选） | `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`）的 `tokens` 与 `last_refresh`，其它键不动 |
 | 全部 Codex 账号（多账号） | 加密账号库：Linux `~/.config/DshAccountManager/accounts.vault`，Windows `%LOCALAPPDATA%\DshAccountManager\accounts.vault` |
 | 导入的 Cockpit 原始字段缓存 | 账号库同目录的 `account-manager-state.json`（敏感字段已密封） |
 | 加密备份 | Linux `~/.local/share/DshAccountManager/Backups`，Windows `%LOCALAPPDATA%\DshAccountManager\Backups` |

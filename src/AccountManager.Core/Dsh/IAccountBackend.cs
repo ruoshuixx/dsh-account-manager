@@ -56,4 +56,7 @@ public interface IAccountBackend
     Task RemoveApiProviderAsync(string providerId, CancellationToken cancellationToken = default);
 
     Task<ProviderRuntimeVerification> VerifyProviderAsync(string providerId, string expectedApi, CancellationToken cancellationToken = default);
+
+    /// <summary>The status-line note of the last activation's Codex CLI step ("Codex CLI 未同步：…"), empty when nothing is worth saying.</summary>
+    string LastCodexCliNote => string.Empty;
 }

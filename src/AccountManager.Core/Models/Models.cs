@@ -20,6 +20,12 @@ public sealed class AccountRow
 
     public bool Active { get; set; }
 
+    /// <summary>The Codex CLI is signed in as this account (the "CLI" chip shows only when dsh's current account differs).</summary>
+    public bool CliCurrent { get; set; }
+
+    /// <summary>Codex CLI sync is on and its login is not this (dsh-current) account, so a switch would still change the CLI file.</summary>
+    public bool CliPending { get; set; }
+
     public AccountKind Kind { get; set; }
 
     public string Label { get; set; } = string.Empty;
@@ -90,6 +96,9 @@ public sealed class SwitchResult
     public string Status { get; set; } = string.Empty;
 
     public bool ReauthRequired { get; set; }
+
+    /// <summary>"Codex CLI 未同步：…" when the CLI step did not happen and the user should know; empty otherwise.</summary>
+    public string CliNote { get; set; } = string.Empty;
 }
 
 /// <summary>Result of a delete operation.</summary>

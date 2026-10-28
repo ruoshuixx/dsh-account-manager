@@ -13,6 +13,12 @@ public sealed class AppSettings
     /// <summary>Profile under <c>profiles/</c> to edit (null = detect: desktop, tauri, then the first other).</summary>
     public string? DshProfile { get; set; }
 
+    /// <summary>CODEX_HOME override for the Codex CLI's auth.json (null = <c>CODEX_HOME</c> environment variable or <c>~/.codex</c>).</summary>
+    public string? CodexHome { get; set; }
+
+    /// <summary>Also write the account being switched to into the Codex CLI's auth.json.</summary>
+    public bool SwitchCodexCliToo { get; set; } = true;
+
     public int AutoRefreshMinutes { get; set; } = 5;
 
     /// <summary>When true, low quota on the active Codex account triggers polling and an automatic switch.</summary>

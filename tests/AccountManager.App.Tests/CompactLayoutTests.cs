@@ -46,11 +46,11 @@ public sealed class CompactLayoutTests : IDisposable
     private static QuotaCellViewModel Bar(double remaining, string reset)
         => new() { HasBar = true, Percent = remaining, Text = Math.Round(remaining) + "%", Level = QuotaCellViewModel.LevelForRemaining(remaining), Tooltip = "t", ResetText = reset };
 
-    private static AccountRowViewModel Codex(MainWindowViewModel vm, string id, string email, string plan, double fiveHour, double week, bool active = false)
+    private static AccountRowViewModel Codex(MainWindowViewModel vm, string id, string email, string plan, double fiveHour, double week, bool active = false, bool cli = false)
         => new(new AccountRow
         {
             Key = id, CredentialId = id, Kind = AccountKind.Codex, Label = email, Identity = email, Email = email, Plan = plan,
-            AccountId = "acct-" + id, Active = active, Status = "就绪", StatusCode = "Ready", SubscriptionExpires = DateTimeOffset.UtcNow.AddDays(28),
+            AccountId = "acct-" + id, Active = active, CliCurrent = cli, Status = "就绪", StatusCode = "Ready", SubscriptionExpires = DateTimeOffset.UtcNow.AddDays(28),
         }, vm)
         {
             Quota5h = Bar(fiveHour, "1h8m · 10-20 18:57"),
@@ -68,7 +68,7 @@ public sealed class CompactLayoutTests : IDisposable
     private static void Fill(MainWindowViewModel vm)
     {
         vm.Accounts.Add(Codex(vm, "c1", LongEmail, "plus", 86, 62, active: true));
-        vm.Accounts.Add(Codex(vm, "c2", LongTeamEmail, "team", 34, 12));
+        vm.Accounts.Add(Codex(vm, "c2", LongTeamEmail, "team", 34, 12, cli: true));
         vm.Accounts.Add(Codex(vm, "c3", "pro@example.test", "pro", 8, 41));
         vm.Accounts.Add(Codex(vm, "c4", "free.user@example.test", "free", 100, 100));
         vm.Accounts.Add(Codex(vm, "c5", "another.quite.long.address.for.layout.testing@subdomain.example.test", "enterprise-business", 55, 3));
@@ -189,6 +189,11 @@ public sealed class CompactLayoutTests : IDisposable
 
             LayoutProbe.AssertClean(window);
             Assert.Equal(8, vm.Accounts.Count);
+            // The CLI chip sits on the row whose account the Codex CLI uses while dsh uses another one, and only there.
+            var chips = texts.Where(t => t.Text == "CLI").ToList();
+            Assert.Single(chips);
+            Assert.True(chips[0].IsEffectivelyVisible);
+            Assert.Single(texts, t => t.Text == "当前");
         }
         finally { window.Close(); }
     }
@@ -263,7 +268,7 @@ public sealed class CompactLayoutTests : IDisposable
 
             await CheckDialog<SettingsDialog>(owner, scaling, () => SettingsDialog.ShowAsync(owner, new SettingsInput
             {
-                DetectedProfiles = new[] { "desktop", "tauri" }, WebDavUrl = "https://dav.example.test/dav/", WebDavUsername = "user", WebDavPasswordStored = true,
+                DetectedProfiles = new[] { "desktop", "tauri" }, CodexHome = "/home/some.very.long.user.name/work/projects/another-long-directory/.codex-home-for-layout", SwitchCodexCliToo = true, WebDavUrl = "https://dav.example.test/dav/", WebDavUsername = "user", WebDavPasswordStored = true,
             }));
 
             await CheckDialog<ReferenceGuardDialog>(owner, scaling, () => ReferenceGuardDialog.ShowAsync(owner, new ReferenceGuardInput

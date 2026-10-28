@@ -77,6 +77,8 @@ public sealed class AccountMapper
             Key = id,
             CredentialId = id,
             Active = JsonNum.ToBool(JsonMerge.Get(credential, "active")),
+            CliCurrent = JsonNum.ToBool(JsonMerge.Get(credential, "cliActive")),
+            CliPending = JsonNum.ToBool(JsonMerge.Get(credential, "cliPending")),
             Kind = AccountKind.Codex,
             Label = display,
             Provider = "openai",

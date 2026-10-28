@@ -128,3 +128,4 @@ dsh 的设置里有些地方按 `provider` + `model` 点名某个 LLM 路由（�
 
 * OAuth 授权请求里的 `originator` 参数使用固定值（`CodexOAuthService`），这是授权服务认可的取值，不要随意更改。
 * Windows 目前只保证编译与单元测试通过。
+* Codex CLI 同步（0.1.7）：`CodexCliAuthStore` 解析 `$CODEX_HOME/auth.json`（设置 `CodexHome` > 环境变量 `CODEX_HOME` > `~/.codex`），只处理文件模式：目录不存在静默跳过且从不创建；`config.toml` 顶层 `cli_auth_credentials_store = "keyring"`（或 `auto` 且没有 auth.json）跳过并提示；`auth_mode: apikey`、只读文件、无法解析的文件、账号缺 id_token 同样跳过并提示。`DshBackend.ActivateCore`：先 `AbsorbCodexCliLogin`（auth.json 的登录与账号库按 `FindActive` 同样规则匹配，令牌较新（访问令牌 `exp`）则写回账号库；不在库里则收养），再写 dsh 授权，成功后 `WriteCodexCli`：JSON 节点往返（保持键顺序与未知键，缩进两空格，`last_refresh` 沿用原值的小数位数）、先用 `BackupService` 备份原文、`DshAtomicWrite` 原子替换 0600、回读校验；已是同一账号则不写不备份。结果存在 `LastCodexCliSync`，由 `SwitchService` 带进 `SwitchResult.CliNote`。读取（`GetCredentialsAsync`）只读 auth.json，给对应账号加 `cliActive`，并在 dsh 当前账号上加 `cliPending`（切号会改动 CLI 文件，所以“已是 dsh 当前”的账号也能把 CLI 同步过去）；界面在 `cliActive` 且不是 dsh 当前账号的行上显示“CLI”标记。导入只在它让账号成为 dsh 当前账号时才走同一条路径。
