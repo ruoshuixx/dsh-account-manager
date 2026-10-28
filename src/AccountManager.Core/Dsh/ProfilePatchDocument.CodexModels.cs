@@ -118,4 +118,50 @@ public sealed partial class ProfilePatchDocument
 
         return doomed.Count;
     }
+
+    /// <summary>
+    /// Sets one integer field of a map item of the <c>openai-codex</c> <c>models</c> block list: an existing plain scalar value is replaced
+    /// in place, a missing field is added as a new line after the item's last line (in the column of its other keys). Nothing else in the
+    /// file moves. Returns whether the text changed; false for a missing id, a bare-string or flow-style item, or a value already equal.
+    /// </summary>
+    public bool SetCodexRouteModelNumber(string id, string key, long value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        var models = FindCodexModelsNode();
+        if (models is null || models.Kind != YKind.Seq || models.Flow) { return false; }
+        var item = models.Items.FirstOrDefault(i => i.Kind == YKind.Map && !i.Flow
+            && i.Entries.FirstOrDefault(e => e.Key.Value == "id") is { } e && YamlTree.IsString(e.Value) && e.Value.Value == id);
+        if (item is null || item.Entries.Count == 0) { return false; }
+
+        var text = _text;
+        var rendered = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var existing = item.Entries.FirstOrDefault(e => e.Key.Value == key);
+        string next;
+        if (existing is not null)
+        {
+            var v = existing.Value;
+            if (!v.IsPlain || v.Flow || v.Kind != YKind.Scalar) { return false; }
+            if (v.Value == rendered) { return false; }
+            next = text.Remove(v.Start, v.End - v.Start).Insert(v.Start, rendered);
+        }
+        else
+        {
+            var column = YamlText.Column(text, item.Entries[0].Key.Start);
+            var nl = YamlText.DetectNewline(text);
+            next = text.Insert(YamlText.LineEnd(text, item.End), nl + new string(' ', column) + key + ": " + rendered);
+        }
+
+        _ = ParseCheck(next);
+        var before = _text;
+        _text = next;
+        var read = GetCodexRouteModels().FirstOrDefault(m => m.Id == id)?.Entry?[key];
+        if (read is not JsonValue rv || !rv.TryGetValue<long>(out var back) || back != value)
+        {
+            _text = before;
+            throw new DshException("写入后的 openai-codex 路由校验失败，已放弃修改。");
+        }
+
+        return true;
+    }
 }

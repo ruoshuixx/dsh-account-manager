@@ -342,7 +342,7 @@ public class SubagentRoutesTests
     // ---- upgrading the empty openai-codex entry 0.1.2 wrote ----
 
     // The built-in list: ids only where dsh's catalog has the model, explicit facts for gpt-6.1-terra (not in dsh 0.2.1's catalog).
-    private const string OfficialBlock = "      openai-codex:\n        models:\n          - id: gpt-6.1-sol\n          - id: gpt-6.1-terra\n";
+    private const string OfficialBlock = "      openai-codex:\n        models:\n          - id: gpt-6.1-sol\n            contextWindow: 872000\n          - id: gpt-6.1-terra\n";
 
     [Fact]
     public void AnEmptyMappingCodexEntryIsUpgradedToTheOfficialModelsAfterABackup()

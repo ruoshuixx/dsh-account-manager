@@ -256,14 +256,14 @@ public class CodexFastTests
         var sol = CodexFastService.BuildEntry("gpt-6.1-sol", null, null);
         Assert.Equal("gpt-6.1-sol-fast", sol["id"]!.GetValue<string>());
         Assert.Equal("GPT-6.1 Sol (Fast)", sol["name"]!.GetValue<string>());
-        Assert.Equal(500000, sol["contextWindow"]!.GetValue<int>());
+        Assert.Equal(872000, sol["contextWindow"]!.GetValue<int>()); // the live catalog's max_context_window (2026-10-28)
         Assert.Equal(128000, sol["maxTokens"]!.GetValue<int>());
         Assert.Equal(new[] { "text", "image" }, sol["input"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray());
         // off is not offered (null in the catalog); the rest keeps its wire spelling.
         Assert.Equal("{\"minimal\":\"low\",\"low\":\"low\",\"medium\":\"medium\",\"high\":\"high\",\"xhigh\":\"xhigh\",\"max\":\"max\"}", sol["reasoningEfforts"]!.ToJsonString());
 
         var luna = CodexFastService.BuildEntry("gpt-6-luna", null, null);
-        Assert.Equal(272000, luna["contextWindow"]!.GetValue<int>());
+        Assert.Equal(872000, luna["contextWindow"]!.GetValue<int>());
         Assert.Equal("none", luna["reasoningEfforts"]!["off"]!.GetValue<string>());
         Assert.Equal("GPT-6 Astra (Fast)", CodexFastService.BuildEntry("gpt-6-astra", null, null)["name"]!.GetValue<string>());
     }

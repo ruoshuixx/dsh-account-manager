@@ -18,7 +18,15 @@ public sealed record CodexAccountModel(
     int? ContextWindow,
     IReadOnlyList<string> Input,
     IReadOnlyList<string> ReasoningEfforts,
-    bool SupportsFast);
+    bool SupportsFast,
+    int? MaxContextWindow = null)
+{
+    /// <summary>
+    /// The context window this program writes for the model: the account's <c>max_context_window</c> when OpenAI reports a sane one
+    /// (what the backend accepts as input, roughly 1M minus the output reserve), else the plain <c>context_window</c>.
+    /// </summary>
+    public int? TargetContextWindow => MaxContextWindow ?? ContextWindow;
+}
 
 /// <summary>The outcome of asking OpenAI for the account's models; <see cref="Reason"/> says why it failed (never contains a token).</summary>
 public sealed record CodexModelListResult(bool Ok, IReadOnlyList<CodexAccountModel> Models, string Reason)
@@ -84,6 +92,9 @@ public class CodexModelCatalogClient
 
     /// <summary>The <c>originator</c> header dsh's own Codex traffic uses.</summary>
     public const string Originator = "pi";
+
+    /// <summary>A reported <c>max_context_window</c> above this is taken to be an error and ignored.</summary>
+    public const int MaxSaneContextWindow = 2_000_000;
 
     public const int TimeoutSeconds = 15;
     public const int MaxBytes = 1048576;
@@ -202,16 +213,21 @@ public class CodexModelCatalogClient
             var fast = m["service_tiers"] is JsonArray tiers && tiers.Any(t => t is JsonObject to && string.Equals(Str(to, "id"), "priority", StringComparison.OrdinalIgnoreCase))
                        || Strings(m["additional_speed_tiers"]).Contains("fast", StringComparer.OrdinalIgnoreCase);
             var context = JsonNum.ToNumber(m["context_window"]);
+            var contextWindow = context is { } cw && cw > 0 && cw <= int.MaxValue ? (int)cw : (int?)null;
+            // max_context_window: ignored when it is below the plain window (nonsense) or absurdly large; never anything near 1,000,000.
+            var maxContext = JsonNum.ToNumber(m["max_context_window"]);
+            int? maxContextWindow = maxContext is { } mw && mw > 0 && mw <= MaxSaneContextWindow && (contextWindow is null || mw >= contextWindow) ? (int)mw : null;
             var priority = JsonNum.ToNumber(m["priority"]);
             models.Add(new CodexAccountModel(
                 slug.Trim(),
                 Str(m, "display_name") ?? string.Empty,
                 Str(m, "visibility") ?? string.Empty,
                 priority is { } p && p >= int.MinValue && p <= int.MaxValue ? (int)p : int.MaxValue,
-                context is { } c && c > 0 && c <= int.MaxValue ? (int)c : null,
+                contextWindow,
                 input.Count == 0 ? new[] { "text" } : input,
                 efforts,
-                fast));
+                fast,
+                maxContextWindow));
         }
 
         return models;

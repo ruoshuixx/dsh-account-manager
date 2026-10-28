@@ -20,10 +20,13 @@ public sealed record FastSyncResult(
     /// <summary>Models this program wanted to remove but left in place because a setting still points at them.</summary>
     public IReadOnlyList<string> KeptBecauseReferenced { get; init; } = Array.Empty<string>();
 
+    /// <summary>Existing models of ours whose <c>contextWindow</c> was set to the account's maximum in this run (id and new value).</summary>
+    public IReadOnlyDictionary<string, int> ContextWindowsSet { get; init; } = new Dictionary<string, int>();
+
     /// <summary>The component was installed or updated, so dsh must be restarted before it loads it.</summary>
     public bool ComponentChanged => Component is { Changed: true };
 
-    public bool Changed => ComponentChanged || AddedModels.Count > 0 || RemovedModels.Count > 0;
+    public bool Changed => ComponentChanged || AddedModels.Count > 0 || RemovedModels.Count > 0 || ContextWindowsSet.Count > 0;
 }
 
 /// <summary>
@@ -130,7 +133,16 @@ public sealed class CodexFastService
     private static bool IsTwin(CodexRouteModel model, IReadOnlySet<string> owned)
         => IsFastShape(model) && (owned.Contains(model.Id) || CodexBuiltInModels.Ids.Contains(model.Id[..^FastSuffix.Length]));
 
-    private static bool IsIdOnly(CodexRouteModel model) => model.Entry is null || model.Entry.Count == 1;
+    /// <summary>An entry that carries nothing but its id (and, since 0.1.6, a context window): dsh fills in the rest from its catalog.</summary>
+    private static bool IsIdOnly(CodexRouteModel model) => model.Entry is null || model.Entry.All(kv => kv.Key is "id" or "contextWindow");
+
+    private static readonly HashSet<string> BuiltInKeys = new(StringComparer.Ordinal) { "id", "name", "contextWindow", "maxTokens", "input", "reasoningEfforts" };
+
+    /// <summary>An explicit entry exactly as the built-in route writes it (e.g. gpt-6.1-terra): its built-in name and nothing outside the usual fields.</summary>
+    private static bool IsBuiltInShape(CodexRouteModel model)
+        => CodexBuiltInModels.Find(model.Id) is { } built && model.Entry is { } entry
+           && entry.All(kv => BuiltInKeys.Contains(kv.Key))
+           && string.Equals(ProviderViewMapper.ReadString(entry, "name"), built.Name, StringComparison.Ordinal);
 
     /// <summary>
     /// Makes the route follow the account's models and gives them Fast twins. Safe to call any time: it returns an empty result when
@@ -163,7 +175,7 @@ public sealed class CodexFastService
         var owned = new HashSet<string>(StringComparer.Ordinal);
         if (recorded is not null) { owned.UnionWith(recorded.Where(presentIds.Contains)); }
         else { owned.UnionWith(present.Where(m => LegacyIdOnly.Contains(m.Id) && IsIdOnly(m)).Select(m => m.Id)); }
-        owned.UnionWith(present.Where(m => IsTwin(m, new HashSet<string>())).Select(m => m.Id));
+        owned.UnionWith(present.Where(m => IsTwin(m, new HashSet<string>()) || IsBuiltInShape(m)).Select(m => m.Id));
         var ownedBefore = owned.ToHashSet(StringComparer.Ordinal);
 
         // 3) what should be there
@@ -205,7 +217,15 @@ public sealed class CodexFastService
             {
                 if (presentIds.Contains(b + FastSuffix)) { continue; }
                 var userEntry = present.FirstOrDefault(p => p.Id == b)?.Entry;
-                entries.Add(BuildEntry(b, userEntry, catalog.GetValueOrDefault(b), apiBySlug.GetValueOrDefault(b)));
+                var api = apiBySlug.GetValueOrDefault(b);
+                if (userEntry is not null && owned.Contains(b) && api?.TargetContextWindow is not null)
+                {
+                    // Our own base entry is about to get the account's maximum, so its old window must not leak into the twin.
+                    userEntry = (JsonObject)userEntry.DeepClone();
+                    userEntry.Remove("contextWindow");
+                }
+
+                entries.Add(BuildEntry(b, userEntry, catalog.GetValueOrDefault(b), api));
             }
         }
 
@@ -241,10 +261,27 @@ public sealed class CodexFastService
             }
         }
 
+        // 6b) context windows: ours are set to the account's maximum (never the user's entries, never without a fetched list)
+        var contextTargets = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (selected is not null)
+        {
+            foreach (var m in present)
+            {
+                if (doomed.Contains(m.Id) || !owned.Contains(m.Id)) { continue; }
+                var twin = IsTwin(m, owned);
+                if (!twin && IsFastShape(m)) { continue; }
+                var baseId = twin ? m.Id[..^FastSuffix.Length] : m.Id;
+                if (apiBySlug.GetValueOrDefault(baseId)?.TargetContextWindow is not { } target) { continue; }
+                var current = m.Entry?["contextWindow"] is JsonValue v && v.TryGetValue<long>(out var n) ? n : (long?)null;
+                if (current != target) { contextTargets[m.Id] = target; }
+            }
+        }
+
         // 7) write
         var added = new List<string>();
         var removed = new List<string>();
-        if (entries.Count > 0 || doomed.Count > 0)
+        var contextSet = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (entries.Count > 0 || doomed.Count > 0 || contextTargets.Count > 0)
         {
             var backup = _backups is null ? string.Empty : _backups.Save(creds ?? new List<JsonNode?>(), path, doc.Text);
             if (backup.Length > 0) { _log?.Info("已生成加密备份（调整 Codex 模型）：" + backup); }
@@ -271,12 +308,23 @@ public sealed class CodexFastService
                     }
                 }
 
+                foreach (var (id, target) in contextTargets)
+                {
+                    if (doomed.Contains(id)) { continue; }
+                    if (d.SetCodexRouteModelNumber(id, "contextWindow", target))
+                    {
+                        contextSet[id] = target;
+                        changed = true;
+                    }
+                }
+
                 return changed;
             });
         }
 
         foreach (var id in keptReferenced) { _log?.Warn("没有移除 Codex 模型 " + id + "：dsh 的设置（例如默认模型）还在引用它。"); }
         if (added.Count > 0) { _log?.Info("已为 openai-codex 路由加入模型：" + string.Join("、", added) + "。"); }
+        if (contextSet.Count > 0) { _log?.Info("已把 Codex 模型上下文设为账号允许的最大值：" + string.Join("、", contextSet.Select(kv => kv.Key + "=" + kv.Value)) + "。"); }
         if (removed.Count > 0) { _log?.Info("已从 openai-codex 路由移除本工具写入的模型：" + string.Join("、", removed) + "（OpenAI 不再提供，或 Fast 组件不可用）。"); }
 
         // 8) remember what is ours now
@@ -288,6 +336,7 @@ public sealed class CodexFastService
             FetchedModels = selectedIds,
             FetchNote = selected is null ? fetchNote : string.Empty,
             KeptBecauseReferenced = keptReferenced,
+            ContextWindowsSet = contextSet,
         };
     }
 
@@ -341,13 +390,18 @@ public sealed class CodexFastService
     internal static JsonObject BaseEntry(CodexAccountModel model, IReadOnlyDictionary<string, JsonObject> catalog)
     {
         var known = catalog.Count > 0 ? catalog.ContainsKey(model.Slug) : CodexBuiltInModels.BundledCatalogIds.Contains(model.Slug);
-        if (known) { return new JsonObject { ["id"] = model.Slug }; }
+        if (known)
+        {
+            var idOnly = new JsonObject { ["id"] = model.Slug };
+            if (model.TargetContextWindow is { } window) { idOnly["contextWindow"] = window; }
+            return idOnly;
+        }
         var built = CodexBuiltInModels.Find(model.Slug);
         var entry = new JsonObject
         {
             ["id"] = model.Slug,
             ["name"] = CodexModelPolicy.NormalizeName(model.DisplayName, model.Slug),
-            ["contextWindow"] = model.ContextWindow ?? built?.ContextWindow ?? 272000,
+            ["contextWindow"] = model.TargetContextWindow ?? built?.ContextWindow ?? 272000,
             ["maxTokens"] = built?.MaxTokens ?? CodexBuiltInModels.DefaultMaxTokens,
             ["input"] = new JsonArray(model.Input.Select(i => (JsonNode?)JsonValue.Create(i)).ToArray()),
         };
@@ -394,6 +448,13 @@ public sealed class CodexFastService
             if (result.RemovedModels.Count > 0) { yield return "Fast 组件没有安装，已移除本工具写入的 Fast 模型：" + string.Join("、", result.RemovedModels) + "。"; }
         }
 
+        if (result.ContextWindowsSet.Count > 0)
+        {
+            var sizes = string.Join("/", result.ContextWindowsSet.Values.Distinct().OrderBy(v => v).Select(v => (v / 1000).ToString(System.Globalization.CultureInfo.InvariantCulture) + "K"));
+            yield return "已把 Codex 模型上下文设为账号允许的最大值（" + sizes + "）：" + string.Join("、", result.ContextWindowsSet.Keys)
+                + "；上下文越长，每条消息消耗的订阅额度越多。";
+        }
+
         foreach (var kept in result.KeptBecauseReferenced) { yield return "没有移除 Codex 模型 " + kept + "：dsh 的设置（例如默认模型）还在引用它。"; }
         if (result.ComponentChanged) { yield return RestartAndCostNote; }
         else if (result.AddedModels.Any(a => a.EndsWith(FastSuffix, StringComparison.Ordinal))) { yield return CostNote; }
@@ -409,7 +470,7 @@ public sealed class CodexFastService
     {
         var table = CodexBuiltInModels.Find(baseId);
         var name = Str(userEntry, "name") ?? Str(catalog, "name") ?? (api is null ? null : CodexModelPolicy.NormalizeName(api.DisplayName, baseId)) ?? table?.Name ?? baseId;
-        var contextWindow = Int(userEntry, "contextWindow") ?? Int(catalog, "contextWindow") ?? api?.ContextWindow ?? table?.ContextWindow ?? 272000;
+        var contextWindow = Int(userEntry, "contextWindow") ?? api?.TargetContextWindow ?? Int(catalog, "contextWindow") ?? table?.ContextWindow ?? 272000;
         var maxTokens = Int(userEntry, "maxTokens") ?? Int(catalog, "maxTokens") ?? table?.MaxTokens ?? CodexBuiltInModels.DefaultMaxTokens;
         var input = Strings(userEntry?["input"]) ?? Strings(catalog?["input"]) ?? (api is { Input.Count: > 0 } ? api.Input.ToArray() : null) ?? table?.Input ?? new[] { "text" };
 

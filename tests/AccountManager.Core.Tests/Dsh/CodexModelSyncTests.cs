@@ -16,14 +16,14 @@ public class CodexModelSyncTests
     private static string AccountJson() => """
         {"models":[
           {"slug":"gpt-6.1-sol","display_name":"GPT-6.1 Sol","visibility":"list","priority":0,"context_window":500000,"input_modalities":["text","image"],
-           "supported_reasoning_levels":[{"effort":"low","description":"x"},{"effort":"medium","description":"x"},{"effort":"high","description":"x"},{"effort":"xhigh","description":"x"},{"effort":"max","description":"x"},{"effort":"ultra","description":"x"}],
+           "max_context_window":872000,"supported_reasoning_levels":[{"effort":"low","description":"x"},{"effort":"medium","description":"x"},{"effort":"high","description":"x"},{"effort":"xhigh","description":"x"},{"effort":"max","description":"x"},{"effort":"ultra","description":"x"}],
            "service_tiers":[{"id":"priority","name":"Fast"}],"additional_speed_tiers":["fast"],"minimal_client_version":"0.150.0"},
-          {"slug":"gpt-6.1-terra","display_name":"GPT-6.1 Terra","visibility":"list","priority":1,"context_window":500000,"input_modalities":["text","image"],
+          {"slug":"gpt-6.1-terra","display_name":"GPT-6.1 Terra","visibility":"list","priority":1,"context_window":500000,"max_context_window":872000,"input_modalities":["text","image"],
            "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"ultra"}],
            "service_tiers":[{"id":"priority"}],"default_service_tier":"priority"},
-          {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","priority":2,"context_window":272000,"input_modalities":["text","image"],
+          {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","priority":2,"context_window":272000,"max_context_window":872000,"input_modalities":["text","image"],
            "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],"service_tiers":[{"id":"priority"}]},
-          {"slug":"gpt-6-luna","display_name":"GPT-6-Luna","visibility":"list","priority":3,"context_window":272000,"input_modalities":["text","image"],
+          {"slug":"gpt-6-luna","display_name":"GPT-6-Luna","visibility":"list","priority":3,"context_window":272000,"max_context_window":872000,"input_modalities":["text","image"],
            "supported_reasoning_levels":[{"effort":"low"}],"additional_speed_tiers":["fast"]},
           {"slug":"gpt-6-sol","display_name":"GPT-6-Sol","visibility":"list","priority":4,"context_window":272000,"input_modalities":["text","image"],"service_tiers":[{"id":"priority"}]},
           {"slug":"gpt-5.6-sol","display_name":"GPT-5.6 Sol","visibility":"list","priority":5,"context_window":272000,"input_modalities":["text"],"service_tiers":[{"id":"priority"}]},
@@ -209,11 +209,12 @@ public class CodexModelSyncTests
         Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6.2-mini" }, result.FetchedModels);
         // terra and mini are not in dsh's catalog; the three old ones stay as they were. Twins only for the Fast-capable (not mini).
         Assert.Equal(new[] { "gpt-6.1-terra", "gpt-6.2-mini", "gpt-6.1-sol-fast", "gpt-6.1-terra-fast", "gpt-6-astra-fast", "gpt-6-luna-fast" }, result.AddedModels);
-        Assert.StartsWith("# mine\n" + OldList, f.Patch);
+        // The three id-only entries (ours: 0.1.4 wrote them) keep their text and gain one contextWindow line each.
+        Assert.StartsWith("# mine\n" + OldList.Replace("gpt-6.1-sol\n", "gpt-6.1-sol\n            contextWindow: 872000\n").Replace("gpt-6-astra\n", "gpt-6-astra\n            contextWindow: 872000\n").Replace("gpt-6-luna\n", "gpt-6-luna\n            contextWindow: 872000\n"), f.Patch);
         var models = ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels();
         var terra = models.Single(m => m.Id == "gpt-6.1-terra").Entry!;
         Assert.Equal("GPT-6.1 Terra", terra["name"]!.GetValue<string>());
-        Assert.Equal(500000, terra["contextWindow"]!.GetValue<int>());
+        Assert.Equal(872000, terra["contextWindow"]!.GetValue<int>()); // max_context_window, not context_window (500000)
         Assert.Equal(128000, terra["maxTokens"]!.GetValue<int>()); // OpenAI has no output limit: the constant
         Assert.Equal(new[] { "text", "image" }, terra["input"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray());
         Assert.Equal("{\"low\":\"low\",\"medium\":\"medium\",\"high\":\"high\"}", terra["reasoningEfforts"]!.ToJsonString()); // ultra is not a dsh level
@@ -226,7 +227,7 @@ public class CodexModelSyncTests
         // The twin of a model dsh knows takes its facts from dsh's catalog; terra's twin from OpenAI's entry.
         var terraFast = models.Single(m => m.Id == "gpt-6.1-terra-fast").Entry!;
         Assert.Equal("GPT-6.1 Terra (Fast)", terraFast["name"]!.GetValue<string>());
-        Assert.Equal(500000, terraFast["contextWindow"]!.GetValue<int>());
+        Assert.Equal(872000, terraFast["contextWindow"]!.GetValue<int>());
         Assert.Equal("GPT-6 Astra (Fast)", models.Single(m => m.Id == "gpt-6-astra-fast").Entry!["name"]!.GetValue<string>());
         Assert.Contains("已从 OpenAI 获取账号可用模型：gpt-6.1-sol、gpt-6.1-terra、gpt-6-astra、gpt-6-luna、gpt-6.2-mini；新增 gpt-6.1-terra", string.Join("\n", CodexFastService.Describe(result)));
         Assert.Contains("首次安装需要重启 dsh", string.Join("\n", CodexFastService.Describe(result)));
@@ -242,7 +243,7 @@ public class CodexModelSyncTests
         f.Fast.Sync(creds);
 
         var models = ProfilePatchDocument.Load(f.PatchPath).GetCodexRouteModels();
-        Assert.Null(models.Single(m => m.Id == "gpt-6.1-sol").Entry is { Count: > 1 } ? "explicit" : null); // id-only
+        Assert.Equal(new[] { "contextWindow", "id" }, models.Single(m => m.Id == "gpt-6.1-sol").Entry!.Select(kv => kv.Key).OrderBy(k => k).ToArray()); // id and window only
         Assert.NotNull(models.Single(m => m.Id == "gpt-6.1-terra").Entry!["contextWindow"]);
     }
 
