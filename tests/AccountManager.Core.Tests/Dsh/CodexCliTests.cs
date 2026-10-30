@@ -12,26 +12,31 @@ public class CodexCliTests
 
     private static string Tok(JsonObject auth, string name) => auth["tokens"]![name]!.GetValue<string>();
 
-    /// <summary>Accounts A (current in dsh and in the CLI) and B in the vault, CLI step on.</summary>
-    private static async Task<(DshFixture F, string A, string B)> TwoAccountsAsync(string? cliJson = null)
+    /// <summary>Accounts A (current in dsh and in the Codex file) and B in the vault; Codex is the switch target.</summary>
+    private static async Task<(DshFixture F, string A, string B)> TwoAccountsAsync(string? cliJson = null, SwitchTarget target = SwitchTarget.Codex)
     {
         var f = new DshFixture();
         var a = await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
         var b = await f.AddCodexAsync("b@example.test", "acct-2", "refresh-b");
         f.UseCli(authJson: cliJson ?? DshFixture.AuthJson("a@example.test", "acct-1", "refresh-a"));
+        f.Target = target; // the accounts were saved while dsh was the target
         return (f, a, b);
     }
 
     [Fact]
-    public async Task SwitchWritesDshAndCodexCliKeepingOtherKeysModeAndBackup()
+    public async Task CodexTargetWritesOnlyAuthJsonKeepingOtherKeysModeAndBackup()
     {
         var (f, _, b) = await TwoAccountsAsync();
         using var _f = f;
         var before = File.ReadAllText(f.CodexAuthPath);
+        var dshBefore = File.ReadAllBytes(f.CredentialsPath);
+        var patchBefore = File.ReadAllText(f.PatchPath);
 
-        await f.Switch.SwitchAsync(b);
+        var result = await f.Switch.SwitchAsync(b);
 
-        Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
+        Assert.Equal(SwitchTarget.Codex, result.Target);
+        Assert.True(result.Changed);
+        Assert.Contains("重启", result.Note);
         var auth = ReadAuth(f);
         Assert.Equal("refresh-b", Tok(auth, "refresh_token"));
         Assert.Equal("acct-2", Tok(auth, "account_id"));
@@ -52,13 +57,35 @@ public class CodexCliTests
         Assert.Single(backups);
         Assert.Equal(before, f.Backups.Read(backups[0])!["configText"]!.GetValue<string>());
         Assert.Empty(Directory.GetFiles(f.CodexHome, "*.tmp"));
-        Assert.Equal(string.Empty, f.Backend.LastCodexCliNote);
+
+        // dsh was not touched: its grant still belongs to A, files byte for byte as they were.
+        Assert.Equal("refresh-a", f.Grant!["refresh"]!.GetValue<string>());
+        Assert.Equal(dshBefore, File.ReadAllBytes(f.CredentialsPath));
+        Assert.Equal(patchBefore, File.ReadAllText(f.PatchPath));
     }
 
     [Fact]
-    public async Task CodexCliTokensNewerThanTheVaultAreWrittenBackFirst()
+    public async Task DshTargetNeverWritesOrBacksUpTheCodexFile()
     {
-        var (f, a, b) = await TwoAccountsAsync(DshFixture.AuthJson("a@example.test", "acct-1", "refresh-a-rotated", exp: 4102444900L));
+        var (f, _, b) = await TwoAccountsAsync(target: SwitchTarget.Dsh);
+        using var _f = f;
+        var before = File.ReadAllBytes(f.CodexAuthPath);
+
+        var result = await f.Switch.SwitchAsync(b);
+
+        Assert.Equal(SwitchTarget.Dsh, result.Target);
+        Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
+        Assert.Equal(before, File.ReadAllBytes(f.CodexAuthPath));
+        Assert.Empty(f.Backups.ListBackups());
+        Assert.Equal(string.Empty, result.Note);
+    }
+
+    [Theory]
+    [InlineData(SwitchTarget.Codex)]
+    [InlineData(SwitchTarget.Dsh)]
+    public async Task CodexTokensNewerThanTheVaultAreWrittenBackFirst(SwitchTarget target)
+    {
+        var (f, a, b) = await TwoAccountsAsync(DshFixture.AuthJson("a@example.test", "acct-1", "refresh-a-rotated", exp: 4102444900L), target);
         using var _f = f;
 
         await f.Switch.SwitchAsync(b);
@@ -67,11 +94,10 @@ public class CodexCliTests
         Assert.Equal("refresh-a-rotated", VaultCredentialMapper.RefreshOf(record));
         Assert.Equal(4102444900000L, VaultCredentialMapper.ExpiresOf(record));
         Assert.Equal("cli-id-token", record["tokens"]!["id_token"]!.GetValue<string>());
-        Assert.Equal("refresh-b", Tok(ReadAuth(f), "refresh_token"));
     }
 
     [Fact]
-    public async Task OlderCodexCliTokensDoNotOverwriteTheVault()
+    public async Task OlderCodexTokensDoNotOverwriteTheVault()
     {
         var (f, a, b) = await TwoAccountsAsync(DshFixture.AuthJson("a@example.test", "acct-1", "refresh-a-stale", exp: 1700000000L));
         using var _f = f;
@@ -82,7 +108,7 @@ public class CodexCliTests
     }
 
     [Fact]
-    public async Task AForeignCodexCliLoginIsAdoptedIntoTheVaultBeforeItIsReplaced()
+    public async Task AForeignCodexLoginIsAdoptedIntoTheVaultBeforeItIsReplaced()
     {
         var (f, _, b) = await TwoAccountsAsync(DshFixture.AuthJson("c@example.test", "acct-3", "refresh-c"));
         using var _f = f;
@@ -98,20 +124,20 @@ public class CodexCliTests
     }
 
     [Fact]
-    public async Task KeyringModeIsSkippedWithAOneLineNoteAndDshStillSwitches()
+    public async Task KeyringModeFailsTheSwitchAndChangesNothing()
     {
         var (f, _, b) = await TwoAccountsAsync();
         using var _f = f;
         File.WriteAllText(Path.Combine(f.CodexHome, "config.toml"), "model = \"x\"\ncli_auth_credentials_store = \"keyring\"  # os keyring\n");
         var before = File.ReadAllText(f.CodexAuthPath);
+        var dshBefore = File.ReadAllBytes(f.CredentialsPath);
 
-        var result = await f.Switch.SwitchAsync(b);
+        var ex = await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(b));
 
-        Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
+        Assert.Contains("密钥环", ex.Message);
+        Assert.DoesNotContain('\n', ex.Message);
         Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
-        Assert.StartsWith("Codex CLI 未同步：", result.CliNote);
-        Assert.Contains("密钥环", result.CliNote);
-        Assert.DoesNotContain('\n', result.CliNote);
+        Assert.Equal(dshBefore, File.ReadAllBytes(f.CredentialsPath));
     }
 
     [Theory]
@@ -144,20 +170,20 @@ public class CodexCliTests
     }
 
     [Fact]
-    public async Task AMissingCodexDirectoryIsNeverCreatedAndNotMentioned()
+    public async Task AMissingCodexDirectoryIsNeverCreatedAndTheSwitchFailsClearly()
     {
         using var f = new DshFixture();
-        var a = await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
+        await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
         var b = await f.AddCodexAsync("b@example.test", "acct-2", "refresh-b");
+        f.Target = SwitchTarget.Codex;
         f.UseCli(createHome: false);
+        var dshBefore = File.ReadAllBytes(f.CredentialsPath);
 
-        var result = await f.Switch.SwitchAsync(b);
+        var ex = await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(b));
 
+        Assert.Contains("没有 Codex 目录", ex.Message);
         Assert.False(Directory.Exists(f.CodexHome));
-        Assert.Equal(string.Empty, result.CliNote);
-        Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
-        Assert.Contains("没有 Codex 目录", f.RunLog);
-        _ = a;
+        Assert.Equal(dshBefore, File.ReadAllBytes(f.CredentialsPath));
     }
 
     [Fact]
@@ -166,16 +192,18 @@ public class CodexCliTests
         using var f = new DshFixture();
         await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
         var b = await f.AddCodexAsync("b@example.test", "acct-2", "refresh-b");
+        f.Target = SwitchTarget.Codex;
         f.UseCli();
 
         await f.Switch.SwitchAsync(b);
 
         Assert.Equal("refresh-b", Tok(ReadAuth(f), "refresh_token"));
         Assert.Empty(f.Backups.ListBackups());
+        Assert.Equal("refresh-a", f.Grant!["refresh"]!.GetValue<string>());
     }
 
     [Fact]
-    public async Task AReadOnlyAuthFileIsAWarningNotAFailure()
+    public async Task AReadOnlyAuthFileFailsTheSwitch()
     {
         if (OperatingSystem.IsWindows()) { return; }
         var (f, _, b) = await TwoAccountsAsync();
@@ -183,11 +211,10 @@ public class CodexCliTests
         File.SetUnixFileMode(f.CodexAuthPath, UnixFileMode.UserRead);
         var before = File.ReadAllText(f.CodexAuthPath);
 
-        var result = await f.Switch.SwitchAsync(b);
+        var ex = await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(b));
 
-        Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
+        Assert.Contains("只读", ex.Message);
         Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
-        Assert.Contains("只读", result.CliNote);
     }
 
     [Fact]
@@ -200,10 +227,8 @@ public class CodexCliTests
         File.SetUnixFileMode(f.CodexHome, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {
-            var result = await f.Switch.SwitchAsync(b);
+            await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(b));
 
-            Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
-            Assert.StartsWith("Codex CLI 未同步：", result.CliNote);
             Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
         }
         finally
@@ -215,32 +240,15 @@ public class CodexCliTests
     }
 
     [Fact]
-    public async Task WithTheSettingOffTheCliFileIsNeverTouchedOrRead()
-    {
-        var (f, _, b) = await TwoAccountsAsync();
-        using var _f = f;
-        f.CliEnabled = false;
-        var before = File.ReadAllText(f.CodexAuthPath);
-
-        var result = await f.Switch.SwitchAsync(b);
-
-        Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
-        Assert.Equal(string.Empty, result.CliNote);
-        Assert.Empty(f.Backups.ListBackups());
-        Assert.Equal(2, f.Vault.Load().Count);
-    }
-
-    [Fact]
     public async Task UnparseableAuthFileIsLeftAlone()
     {
         var (f, _, b) = await TwoAccountsAsync("{ not json");
         using var _f = f;
 
-        var result = await f.Switch.SwitchAsync(b);
+        var ex = await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(b));
 
         Assert.Equal("{ not json", File.ReadAllText(f.CodexAuthPath));
-        Assert.Contains("格式无法识别", result.CliNote);
-        Assert.Equal("refresh-b", f.Grant!["refresh"]!.GetValue<string>());
+        Assert.Contains("格式无法识别", ex.Message);
     }
 
     [Fact]
@@ -249,37 +257,28 @@ public class CodexCliTests
         var (f, _, b) = await TwoAccountsAsync("{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"sk-fake\"}");
         using var _f = f;
 
-        var result = await f.Switch.SwitchAsync(b);
+        var ex = await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(b));
 
-        Assert.Contains("API Key", result.CliNote);
+        Assert.Contains("API Key", ex.Message);
         Assert.Contains("sk-fake", File.ReadAllText(f.CodexAuthPath));
     }
 
     [Fact]
-    public async Task SwitchingToTheAccountTheCliAlreadyHasMakesNoBackupAndNoWrite()
+    public async Task SwitchingToTheAccountCodexAlreadyHasMakesNoBackupAndNoWrite()
     {
-        using var f = new DshFixture();
-        await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
-        var b = await f.AddCodexAsync("b@example.test", "acct-2", "refresh-b");
-        f.UseCli();
-        await f.Switch.SwitchAsync(b);
-        var written = File.ReadAllText(f.CodexAuthPath);
-        var a = f.Vault.Load().Single(r => VaultCredentialMapper.EmailOf(r) == "a@example.test");
+        var (f, a, _) = await TwoAccountsAsync();
+        using var _f = f;
+        var before = File.ReadAllBytes(f.CodexAuthPath);
 
-        await f.Switch.SwitchAsync(VaultCredentialMapper.IdOf(a)!);
-        await f.Switch.SwitchAsync(b); // back: CLI holds A now, so this writes B again
-        var again = File.ReadAllText(f.CodexAuthPath);
-        var backupsBefore = f.Backups.ListBackups().Count;
-        // dsh and CLI both already on B: asking again changes nothing
-        await f.Switch.SwitchAsync(b);
+        var result = await f.Switch.SwitchAsync(a);
 
-        Assert.Equal(again, File.ReadAllText(f.CodexAuthPath));
-        Assert.Equal(backupsBefore, f.Backups.ListBackups().Count);
-        Assert.NotEqual(string.Empty, written);
+        Assert.False(result.Changed);
+        Assert.Equal(before, File.ReadAllBytes(f.CodexAuthPath));
+        Assert.Empty(f.Backups.ListBackups());
     }
 
     [Fact]
-    public async Task ReadingAccountsMarksTheCliAccountAndWritesNothing()
+    public async Task TheCurrentMarkerFollowsTheSelectedTargetAndReadingWritesNothing()
     {
         var (f, a, b) = await TwoAccountsAsync(DshFixture.AuthJson("b@example.test", "acct-2", "refresh-b"));
         using var _f = f;
@@ -287,15 +286,17 @@ public class CodexCliTests
         var stamp = File.GetLastWriteTimeUtc(f.CodexAuthPath);
         var vaultBefore = File.ReadAllBytes(f.Vault.FilePath);
 
-        var snapshot = await f.Snapshot.GetSnapshotAsync();
+        var codex = await f.Snapshot.GetSnapshotAsync();
+        Assert.True(codex.Accounts.Single(r => r.CredentialId == a).Active);        // dsh uses A ...
+        Assert.False(codex.Accounts.Single(r => r.CredentialId == a).TargetCurrent); // ... but the target is Codex: B is current
+        Assert.True(codex.Accounts.Single(r => r.CredentialId == b).TargetCurrent);
+        Assert.Equal(string.Empty, codex.TargetNote);
 
-        var rowA = snapshot.Accounts.Single(r => r.CredentialId == a);
-        var rowB = snapshot.Accounts.Single(r => r.CredentialId == b);
-        Assert.True(rowA.Active);
-        Assert.False(rowA.CliCurrent);
-        Assert.True(rowA.CliPending);
-        Assert.True(rowB.CliCurrent);
-        Assert.False(rowB.Active);
+        f.Target = SwitchTarget.Dsh;
+        var dsh = await f.Snapshot.GetSnapshotAsync();
+        Assert.True(dsh.Accounts.Single(r => r.CredentialId == a).TargetCurrent);
+        Assert.False(dsh.Accounts.Single(r => r.CredentialId == b).TargetCurrent);
+
         Assert.Equal(bytes, File.ReadAllBytes(f.CodexAuthPath));
         Assert.Equal(stamp, File.GetLastWriteTimeUtc(f.CodexAuthPath));
         Assert.Equal(vaultBefore, File.ReadAllBytes(f.Vault.FilePath));
@@ -303,60 +304,36 @@ public class CodexCliTests
     }
 
     [Fact]
-    public async Task NoChipsWhenBothUseTheSameAccountOrTheSettingIsOff()
+    public async Task ImportActivatingTheFirstAccountFollowsTheTarget()
     {
-        var (f, a, _) = await TwoAccountsAsync();
-        using var _f = f;
+        // Dsh target: the first account becomes dsh's current one, Codex's file is not written.
+        using (var f = new DshFixture())
+        {
+            f.UseCli(authJson: DshFixture.AuthJson("old@example.test", "acct-9", "refresh-old"));
+            var before = File.ReadAllText(f.CodexAuthPath);
+            var file = DshBackendApiTests.WriteJson(f, "in.json", new JsonArray(TestAccounts.CockpitOauth("c-1", "n@example.test", "acct-5", "refresh-n")));
 
-        var same = await f.Snapshot.GetSnapshotAsync();
-        Assert.All(same.Accounts, r => Assert.False(r.CliPending));
-        Assert.True(same.Accounts.Single(r => r.CredentialId == a).CliCurrent);
+            var result = await f.Import.ImportAsync(await f.Import.PreviewAsync(file));
 
-        f.CliEnabled = false;
-        var off = await f.Snapshot.GetSnapshotAsync();
-        Assert.All(off.Accounts, r => Assert.False(r.CliCurrent || r.CliPending));
-    }
+            Assert.Equal(0, result.Failed);
+            Assert.Equal("refresh-n", f.Grant!["refresh"]!.GetValue<string>());
+            Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
+        }
 
-    [Fact]
-    public async Task SwitchingTheAccountDshAlreadyUsesStillSyncsTheCli()
-    {
-        var (f, a, _) = await TwoAccountsAsync(DshFixture.AuthJson("b@example.test", "acct-2", "refresh-b"));
-        using var _f = f;
+        // Codex target: nothing is switched by an import, neither dsh nor Codex.
+        using (var f = new DshFixture { Target = SwitchTarget.Codex })
+        {
+            f.UseCli(authJson: DshFixture.AuthJson("old@example.test", "acct-9", "refresh-old"));
+            var before = File.ReadAllText(f.CodexAuthPath);
+            var file = DshBackendApiTests.WriteJson(f, "in.json", new JsonArray(TestAccounts.CockpitOauth("c-1", "n@example.test", "acct-5", "refresh-n")));
 
-        var result = await f.Switch.SwitchAsync(a);
+            var result = await f.Import.ImportAsync(await f.Import.PreviewAsync(file));
 
-        Assert.False(result.Changed);
-        Assert.Equal("refresh-a", Tok(ReadAuth(f), "refresh_token"));
-    }
-
-    [Fact]
-    public async Task ImportActivatingTheFirstAccountWritesTheCliToo()
-    {
-        using var f = new DshFixture();
-        f.UseCli(authJson: DshFixture.AuthJson("old@example.test", "acct-9", "refresh-old"));
-        var file = DshBackendApiTests.WriteJson(f, "in.json", new JsonArray(TestAccounts.CockpitOauth("c-1", "n@example.test", "acct-5", "refresh-n")));
-
-        var result = await f.Import.ImportAsync(await f.Import.PreviewAsync(file));
-
-        Assert.Equal(0, result.Failed);
-        Assert.Equal("refresh-n", f.Grant!["refresh"]!.GetValue<string>());
-        Assert.Equal("refresh-n", Tok(ReadAuth(f), "refresh_token"));
-        Assert.Contains(f.Vault.Load(), r => VaultCredentialMapper.RefreshOf(r) == "refresh-old"); // the CLI's old login was adopted
-    }
-
-    [Fact]
-    public async Task ImportThatDoesNotActivateLeavesTheCliAlone()
-    {
-        using var f = new DshFixture();
-        await f.AddCodexAsync("a@example.test", "acct-1", "refresh-a", activate: true);
-        f.UseCli(authJson: DshFixture.AuthJson("a@example.test", "acct-1", "refresh-a"));
-        var before = File.ReadAllText(f.CodexAuthPath);
-        var file = DshBackendApiTests.WriteJson(f, "in.json", new JsonArray(TestAccounts.CockpitOauth("c-1", "n@example.test", "acct-5", "refresh-n")));
-
-        await f.Import.ImportAsync(await f.Import.PreviewAsync(file));
-
-        Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
-        Assert.DoesNotContain(f.Backups.ListBackups(), p => f.Backups.Read(p)!["configPath"]?.GetValue<string>() == f.CodexAuthPath);
+            Assert.Equal(0, result.Failed);
+            Assert.Null(f.Grant);
+            Assert.Equal(before, File.ReadAllText(f.CodexAuthPath));
+            Assert.Contains(f.Vault.Load(), r => VaultCredentialMapper.RefreshOf(r) == "refresh-n");
+        }
     }
 
     [Fact]

@@ -208,10 +208,7 @@ public sealed partial class AccountRowViewModel : ObservableObject
 
     public bool IsApi => Row.Kind == AccountKind.Api;
 
-    public bool IsCurrent => IsCodex && Row.Active;
-
-    /// <summary>The Codex CLI uses this account while dsh uses another one.</summary>
-    public bool IsCliCurrent => IsCodex && Row.CliCurrent && !Row.Active;
+    public bool IsCurrent => IsCodex && Row.TargetCurrent;
 
     public string Title => string.IsNullOrWhiteSpace(Row.Label)
         ? (string.IsNullOrWhiteSpace(Row.Identity) ? Row.Key : Row.Identity)

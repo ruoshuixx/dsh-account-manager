@@ -18,13 +18,11 @@ public sealed class AccountRow
 
     public string CredentialId { get; set; } = string.Empty;
 
+    /// <summary>dsh's current Codex account (the grant in its credentials file), whatever the switch target is.</summary>
     public bool Active { get; set; }
 
-    /// <summary>The Codex CLI is signed in as this account (the "CLI" chip shows only when dsh's current account differs).</summary>
-    public bool CliCurrent { get; set; }
-
-    /// <summary>Codex CLI sync is on and its login is not this (dsh-current) account, so a switch would still change the CLI file.</summary>
-    public bool CliPending { get; set; }
+    /// <summary>This account is the current one of the selected switch target (dsh, Codex or OpenCode): the "当前" marker.</summary>
+    public bool TargetCurrent { get; set; }
 
     public AccountKind Kind { get; set; }
 
@@ -106,8 +104,11 @@ public sealed class SwitchResult
 
     public bool ReauthRequired { get; set; }
 
-    /// <summary>"Codex CLI 未同步：…" when the CLI step did not happen and the user should know; empty otherwise.</summary>
-    public string CliNote { get; set; } = string.Empty;
+    /// <summary>The program that was switched.</summary>
+    public Accounts.SwitchTarget Target { get; set; }
+
+    /// <summary>A short extra line for the status bar (e.g. a restart hint); empty when there is nothing to add.</summary>
+    public string Note { get; set; } = string.Empty;
 }
 
 /// <summary>Result of a delete operation.</summary>
@@ -186,4 +187,7 @@ public sealed class AccountSnapshot
 
     /// <summary>Non-empty when the provider config could not be read (Codex rows still valid).</summary>
     public string Warning { get; set; } = string.Empty;
+
+    /// <summary>Why the selected switch target's current account could not be determined (OpenCode not found, no Codex directory ...); empty when it could.</summary>
+    public string TargetNote { get; set; } = string.Empty;
 }

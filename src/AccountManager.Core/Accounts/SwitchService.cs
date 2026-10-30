@@ -5,19 +5,24 @@ using AccountManager.Core.Dsh;
 namespace AccountManager.Core.Accounts;
 
 /// <summary>
-/// Manual activation: validate latest state -> write dsh's current Codex grant -> read back and verify.
-/// Never edits provider config and never goes online.
+/// Manual activation: validate latest state -> write the account into the selected switch target only (dsh's current
+/// Codex grant, Codex's <c>auth.json</c> or OpenCode's active credential) -> read back and verify.
+/// Never edits provider config and never goes online. Without <see cref="SwitchTargets"/> the target is always dsh.
 /// </summary>
 public sealed class SwitchService
 {
     private readonly IAccountBackend _api;
     private readonly AccountMapper _mapper;
+    private readonly SwitchTargets? _targets;
 
-    public SwitchService(IAccountBackend api, AccountMapper mapper)
+    public SwitchService(IAccountBackend api, AccountMapper mapper, SwitchTargets? targets = null)
     {
         _api = api;
         _mapper = mapper;
+        _targets = targets;
     }
+
+    public SwitchTarget Target => _targets?.Selected ?? SwitchTarget.Dsh;
 
     public async Task<SwitchResult> SwitchAsync(string credentialId, CancellationToken cancellationToken = default)
     {
@@ -39,33 +44,37 @@ public sealed class SwitchService
         }
 
         var account = _mapper.ConvertCredential(credential);
-        if (account.Active && account.CliPending)
+        var target = Target;
+        SwitchResult Result(bool changed, string note = "") => new()
         {
-            // dsh already uses this account; only the Codex CLI file is behind.
-            await _api.ActivateCredentialAsync(id, cancellationToken).ConfigureAwait(false);
-            return new SwitchResult
-            {
-                Changed = false,
-                Label = account.Label,
-                CredentialID = account.CredentialId,
-                Active = true,
-                Status = account.Status,
-                ReauthRequired = account.StatusCode == "Expired",
-                CliNote = _api.LastCodexCliNote,
-            };
-        }
+            Changed = changed,
+            Label = account.Label,
+            CredentialID = account.CredentialId,
+            Active = true,
+            Status = account.Status,
+            ReauthRequired = account.StatusCode == "Expired",
+            Target = target,
+            Note = note,
+        };
 
-        if (account.Active)
+        // Already the target's current account: nothing is read or written.
+        var current = target == SwitchTarget.Dsh ? (account.Active ? id : null) : (await _targets!.GetCurrentAsync(target, cancellationToken).ConfigureAwait(false)).Id;
+        if (current == id) { return Result(false); }
+
+        if (_targets is not null) { await _targets.AbsorbAsync(target, cancellationToken).ConfigureAwait(false); }
+
+        switch (target)
         {
-            return new SwitchResult
+            case SwitchTarget.Codex:
             {
-                Changed = false,
-                Label = account.Label,
-                CredentialID = account.CredentialId,
-                Active = true,
-                Status = account.Status,
-                ReauthRequired = account.StatusCode == "Expired",
-            };
+                var outcome = _targets!.WriteCodex(id);
+                return Result(outcome.Changed, outcome.Note);
+            }
+            case SwitchTarget.OpenCode:
+            {
+                var outcome = await _targets!.ActivateOpenCodeAsync(id, cancellationToken).ConfigureAwait(false);
+                return Result(outcome.Changed, outcome.Note);
+            }
         }
 
         await _api.ActivateCredentialAsync(id, cancellationToken).ConfigureAwait(false);
@@ -83,15 +92,6 @@ public sealed class SwitchService
             throw new DshException("激活未成功：回读校验失败。账号可能已被其他程序修改，请在 dsh 中确认后重试。");
         }
 
-        return new SwitchResult
-        {
-            Changed = true,
-            Label = account.Label,
-            CredentialID = account.CredentialId,
-            Active = true,
-            Status = account.Status,
-            ReauthRequired = account.StatusCode == "Expired",
-            CliNote = _api.LastCodexCliNote,
-        };
+        return Result(true);
     }
 }

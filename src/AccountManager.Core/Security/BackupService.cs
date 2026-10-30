@@ -29,7 +29,7 @@ public sealed class BackupService
     /// Test/DI constructor: callers supply the protection pair so an explicit temporary
     /// directory can be used without touching the process-wide default key store.
     /// </summary>
-    internal BackupService(string directory, Func<byte[], byte[]> protect, Func<byte[], byte[]> unprotect)
+    public BackupService(string directory, Func<byte[], byte[]> protect, Func<byte[], byte[]> unprotect)
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);
         _directory = directory;

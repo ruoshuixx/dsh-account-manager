@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=DSH Account Manager
-Comment=Manage DSH accounts
+Name=AI Account Manager
+Name[zh_CN]=AI 账号管理
+Comment=Manage dsh, Codex and OpenCode accounts
+Comment[zh_CN]=管理 dsh、Codex、OpenCode 的账号
 Exec=@DAM_EXEC@
 Icon=dsh-account-manager
 Terminal=false

@@ -369,38 +369,61 @@ public class DialogTests
     }
 
     [AvaloniaFact]
-    public async Task SettingsDialogShowsAndReturnsTheCodexCliRow()
+    public async Task SettingsDialogShowsAndReturnsTheCodexAndOpenCodeRows()
     {
         var owner = new Window();
         owner.Show();
         try
         {
-            var pending = SettingsDialog.ShowAsync(owner, new SettingsInput { CodexHome = "/tmp/codex-x", SwitchCodexCliToo = true });
+            var pending = SettingsDialog.ShowAsync(owner, new SettingsInput { CodexHome = "/tmp/codex-x", OpenCodeCliPath = "/opt/oc/opencode" });
             var dialog = owner.OwnedWindows.OfType<SettingsDialog>().Single();
             dialog.UpdateLayout();
             Assert.Equal("/tmp/codex-x", dialog.FindControl<TextBox>("CodexHomeBox")!.Text);
-            Assert.True(dialog.FindControl<CheckBox>("CliSwitchBox")!.IsChecked);
+            Assert.Equal("/opt/oc/opencode", dialog.FindControl<TextBox>("OpenCodeCliBox")!.Text);
+            Assert.Null(dialog.FindControl<CheckBox>("CliSwitchBox")); // the toolbar's switch target replaced the old tick
             Assert.NotNull(ToolTip.GetTip(dialog.FindControl<TextBox>("CodexHomeBox")!));
-            Assert.Equal(2, dialog.GetVisualDescendants().OfType<Button>().Count(b => b.Content?.ToString() == "浏览…"));
-            dialog.FindControl<CheckBox>("CliSwitchBox")!.IsChecked = false;
+            Assert.NotNull(ToolTip.GetTip(dialog.FindControl<TextBox>("OpenCodeCliBox")!));
+            Assert.Equal(3, dialog.GetVisualDescendants().OfType<Button>().Count(b => b.Content?.ToString() == "浏览…"));
+            Assert.Contains(dialog.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "OpenCode 命令路径");
             dialog.FindControl<TextBox>("CodexHomeBox")!.Text = " /tmp/other ";
+            dialog.FindControl<TextBox>("OpenCodeCliBox")!.Text = "  ";
             Click(dialog, "保存");
             var result = await pending;
             Assert.NotNull(result);
-            Assert.False(result!.SwitchCodexCliToo);
-            Assert.Equal("/tmp/other", result.CodexHome);
+            Assert.Equal("/tmp/other", result!.CodexHome);
+            Assert.Equal(string.Empty, result.OpenCodeCliPath);
         }
         finally { owner.Close(); }
     }
 
     [Fact]
-    public void SettingsDefaultToSwitchingTheCodexCliToo()
+    public void SettingsDefaultToTheDshSwitchTargetAndAnOldFileWithTheLegacyTickStillLoads()
     {
         var settings = new AppSettings();
-        Assert.True(settings.SwitchCodexCliToo);
+        Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Dsh, settings.SwitchTarget);
         Assert.Null(settings.CodexHome);
-        var json = System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"DshHome\":\"x\"}")!;
-        Assert.True(json.SwitchCodexCliToo);
+        Assert.Null(settings.OpenCodeCliPath);
+        Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Dsh, System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"DshHome\":\"x\"}")!.SwitchTarget);
+
+        var path = Path.Combine(Path.GetTempPath(), "setOld-" + Guid.NewGuid().ToString("N")[..8] + ".json");
+        try
+        {
+            File.WriteAllText(path, "{\"DshHome\":\"/h\",\"CodexHome\":\"/c\",\"SwitchCodexCliToo\":true,\"AutoRefreshMinutes\":7}");
+            var store = new SettingsStore(path);
+            var loaded = store.Load();
+            Assert.Equal("/h", loaded.DshHome);
+            Assert.Equal("/c", loaded.CodexHome);
+            Assert.Equal(7, loaded.AutoRefreshMinutes);
+            Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Dsh, loaded.SwitchTarget);
+            store.Save(loaded);
+            Assert.DoesNotContain("SwitchCodexCliToo", File.ReadAllText(path)); // the legacy flag is dropped on the next save
+            Assert.Contains("\"SwitchTarget\": \"Dsh\"", File.ReadAllText(path));
+
+            loaded.SwitchTarget = AccountManager.Core.Accounts.SwitchTarget.OpenCode;
+            store.Save(loaded);
+            Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.OpenCode, store.Load().SwitchTarget);
+        }
+        finally { try { File.Delete(path); } catch { /* best effort */ } }
     }
 
     [AvaloniaTheory]

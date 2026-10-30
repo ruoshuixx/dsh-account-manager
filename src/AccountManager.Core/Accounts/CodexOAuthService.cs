@@ -371,7 +371,7 @@ public sealed class CodexOAuthSession : IAsyncDisposable
             {
                 await SubmitCallbackAsync(new Uri(new Uri(RedirectUri), first[1]).AbsoluteUri).ConfigureAwait(false);
                 // Do not echo query/code/state into HTML or logs.
-                await RespondAsync(stream, true, "授权已完成，请返回 DSH 账号管理工具确认保存。", CancellationToken.None).ConfigureAwait(false);
+                await RespondAsync(stream, true, "授权已完成，请返回 AI 账号管理工具确认保存。", CancellationToken.None).ConfigureAwait(false);
             }
             catch (DshException)
             {
@@ -390,7 +390,7 @@ public sealed class CodexOAuthSession : IAsyncDisposable
 
     private static async Task RespondAsync(NetworkStream stream, bool success, string message, CancellationToken ct)
     {
-        var body = Encoding.UTF8.GetBytes("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>DSH 账号授权</title><body><p>" + message + "</p></body></html>");
+        var body = Encoding.UTF8.GetBytes("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>AI 账号授权</title><body><p>" + message + "</p></body></html>");
         var header = Encoding.ASCII.GetBytes("HTTP/1.1 " + (success ? "200 OK" : "400 Bad Request")
             + "\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " + body.Length
             + "\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\n\r\n");

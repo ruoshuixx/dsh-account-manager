@@ -122,6 +122,22 @@ public static class VaultCredentialMapper
         return byEmail.Count == 1 ? byEmail[0] : -1;
     }
 
+    /// <summary>
+    /// <see cref="FindActive"/>, except that a record found only through the account id (a team workspace is shared by
+    /// several users) is rejected when both sides know their e-mail and the e-mails differ.
+    /// </summary>
+    public static int FindActiveVerified(IReadOnlyList<JsonObject> records, JsonObject? grant)
+    {
+        var index = FindActive(records, grant);
+        if (index < 0 || grant is null) { return index; }
+        var refresh = JsonMerge.GetString(grant, "refresh") ?? string.Empty;
+        var access = JsonMerge.GetString(grant, "access") ?? string.Empty;
+        if ((refresh.Length > 0 && RefreshOf(records[index]) == refresh) || (access.Length > 0 && AccessOf(records[index]) == access)) { return index; }
+        var grantEmail = GrantEmail(grant);
+        var recordEmail = EmailOf(records[index]);
+        return grantEmail.Length > 0 && recordEmail.Length > 0 && !string.Equals(grantEmail, recordEmail, StringComparison.OrdinalIgnoreCase) ? -1 : index;
+    }
+
     /// <summary>The profile e-mail inside the grant's access token (empty when absent).</summary>
     public static string GrantEmail(JsonObject grant)
     {

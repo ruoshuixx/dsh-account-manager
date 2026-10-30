@@ -46,10 +46,11 @@ public sealed class SettingsInput
     /// <summary>Automatically switch accounts when the active one runs out of quota.</summary>
     public bool AutoSwitchAccount { get; init; }
 
-    public bool SwitchCodexCliToo { get; init; } = true;
-
     /// <summary>CODEX_HOME override; empty = automatic.</summary>
     public string CodexHome { get; init; } = string.Empty;
+
+    /// <summary>OpenCode CLI executable override; empty = automatic.</summary>
+    public string OpenCodeCliPath { get; init; } = string.Empty;
 
     // --- WebDAV sync ---
     public string WebDavUrl { get; init; } = string.Empty;
@@ -79,9 +80,9 @@ public sealed class SettingsResult
 
     public bool AutoSwitchAccount { get; init; }
 
-    public bool SwitchCodexCliToo { get; init; } = true;
-
     public string CodexHome { get; init; } = string.Empty;
+
+    public string OpenCodeCliPath { get; init; } = string.Empty;
 
     // --- WebDAV sync ---
     public string WebDavUrl { get; init; } = string.Empty;

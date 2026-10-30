@@ -1,4 +1,4 @@
-# DSH 账号管理器 — 后端架构
+# AI 账号管理（原 DSH 账号管理器）— 后端架构
 
 这里记录 dsh 后端的结构与映射决策：账号、供应商如何落在 dsh 的文件里，以及上层业务（映射、导入导出、额度、切号、删除）如何通过一个统一的后端接口使用它们。
 C# 命名空间仍是 `AccountManager.*`。
@@ -10,11 +10,13 @@ App（Avalonia / MVVM）
   AppServices                组合根：DshHome + AccountVault + DshBackend + 各服务
 Core 上层服务（几乎原样）
   AccountSnapshotService     读取 → 账号行
-  SwitchService              切号 + 回读校验
+  SwitchService              切号（按切换目标）+ 回读校验
+  SwitchTargets              dsh / Codex / OpenCode 三个目标：谁在用哪个账号、写前吸收较新令牌、只写所选目标（§12）
   AccountActions(+Add)       删除 / API 编辑 / 添加（改写，见 §5）
   ImportService / ExportService
   AccountQuotaSelector / AccountResetService …
         │  只依赖 IAccountBackend（统一的凭据 JSON 形态）
+Core/OpenCode                OpenCode 命令行适配（OpenCodeCli / OpenCodeApi / LinuxOpenCodeDiscovery / OpenCodeAccountStore）
 Core/Dsh
   IAccountBackend ──► DshBackend   适配层：vault + grant + 供应商 ⇄ 凭据 JSON
                        ├─ AccountVault            加密账号库（Cockpit 形态记录）
@@ -130,4 +132,18 @@ dsh 的设置里有些地方按 `provider` + `model` 点名某个 LLM 路由（�
 
 * OAuth 授权请求里的 `originator` 参数使用固定值（`CodexOAuthService`），这是授权服务认可的取值，不要随意更改。
 * Windows 目前只保证编译与单元测试通过。
-* Codex CLI 同步（0.1.7）：`CodexCliAuthStore` 解析 `$CODEX_HOME/auth.json`（设置 `CodexHome` > 环境变量 `CODEX_HOME` > `~/.codex`），只处理文件模式：目录不存在静默跳过且从不创建；`config.toml` 顶层 `cli_auth_credentials_store = "keyring"`（或 `auto` 且没有 auth.json）跳过并提示；`auth_mode: apikey`、只读文件、无法解析的文件、账号缺 id_token 同样跳过并提示。`DshBackend.ActivateCore`：先 `AbsorbCodexCliLogin`（auth.json 的登录与账号库按 `FindActive` 同样规则匹配，令牌较新（访问令牌 `exp`）则写回账号库；不在库里则收养），再写 dsh 授权，成功后 `WriteCodexCli`：JSON 节点往返（保持键顺序与未知键，缩进两空格，`last_refresh` 沿用原值的小数位数）、先用 `BackupService` 备份原文、`DshAtomicWrite` 原子替换 0600、回读校验；已是同一账号则不写不备份。结果存在 `LastCodexCliSync`，由 `SwitchService` 带进 `SwitchResult.CliNote`。读取（`GetCredentialsAsync`）只读 auth.json，给对应账号加 `cliActive`，并在 dsh 当前账号上加 `cliPending`（切号会改动 CLI 文件，所以“已是 dsh 当前”的账号也能把 CLI 同步过去）；界面在 `cliActive` 且不是 dsh 当前账号的行上显示“CLI”标记。导入只在它让账号成为 dsh 当前账号时才走同一条路径。
+* Codex `auth.json` 的读写规则（`CodexCliAuthStore`，0.1.7 引入、0.2.0 起只在切换目标为 Codex 时写）见 §12。
+
+## 12. 切换目标（0.2.0：dsh / Codex / OpenCode）
+
+一个 vault 账号（Cockpit 形态记录，账号库里保存最新的 refresh token）可以被设为三个程序之一的“当前账号”。同一个 refresh token 被多个程序同时用，其中一个刷新后别的会报 `refresh_token_reused`，所以**切换目标是单选**：设置 `SwitchTarget`（`Dsh | Codex | OpenCode`，默认 `Dsh`，序列化为字符串）；工具栏三个勾选框由 `MainWindowViewModel` 保证“恰好勾一个”（点已勾的保持勾选，`MainWindow` 在更新后把控件同步回视图模型的值）。旧设置里的 `SwitchCodexCliToo`（0.1.7–0.1.8）只在加载时读取，不再起作用，下次保存时丢弃。
+
+* **只写所选目标**（`SwitchService` + `SwitchTargets`）：
+  * Dsh：`DshBackend.ActivateCredentialAsync`（授权写入 + 回读 + `EnsureCodexRoute`），不再写 Codex 的 `auth.json`。
+  * Codex：`CodexCliAuthStore.Write`（备份、原子替换 0600、保留其它键、回读；规则见 0.1.7）。目录不存在 / 密钥环 / 只读 / 格式不认识 / API Key 登录时**切号失败**（异常信息即原因），不碰 dsh。
+  * OpenCode：`OpenCodeAccountStore.ActivateAsync`：列出 `openai` 的 ChatGPT OAuth 凭据，按“refresh 相同 → 同账号 ID 且 e-mail 相同（双方都有 e-mail 而不同则视为同工作区的另一个用户）→ 无 e-mail 时最新的”找同一账号；找到则（账号库令牌更新时先 `create` 新凭据再 `delete` 旧的）`activate`，没有则 `create`（`activate: true`、自选 ID，响应丢失时按 ID 回读核对、不重试）；最后回读，必须恰好一个 active 且是它。找不到命令行 → `OpenCodeException`（中文提示），此时尚未做任何改动。
+* **写前吸收**（`SwitchTargets.AbsorbAsync`）：dsh 授权、Codex `auth.json`（不认识的登录会收进账号库）、OpenCode 凭据（只吸收账号库已有账号的较新令牌，不收养陌生账号）里同一账号令牌更新（访问令牌到期更晚）的写回账号库。匹配用 `VaultCredentialMapper.FindActiveVerified`（在 `FindActive` 的基础上，只靠账号 ID 命中而双方 e-mail 都已知且不同时判为不同账号，因为团队工作区的账号 ID 是共用的）。目标是 OpenCode 时先读 OpenCode（读不到就在任何改动之前失败）；其它目标下 OpenCode 不可用只是静默跳过。
+* **当前标记**：`AccountRow.Active` 仍是 dsh 的授权；`AccountRow.TargetCurrent` 是所选目标的当前账号（`AccountSnapshotService` 用 `SwitchTargets.GetCurrentAsync` 填，读不到时 `AccountSnapshot.TargetNote` 写原因，界面并入供应商警告）。旧的“CLI”标记与 `cliActive/cliPending` 已移除。只读 OpenCode 的开销（一次命令行调用）仅在目标是 OpenCode 或需要跨目标检查时发生。
+* **跨目标保护**：`GetUsedByOthersAsync` / `GetOtherUsersAsync` 给出“目标之外还有哪些程序正在用这个账号”。手动切号时界面弹确认；自动切号用同一份结果把这些账号排除在候选之外（读不到其它目标的状态时不切）。
+* **保存账号（导入 / 添加）不替你切号**：`DshBackend.CreateCredentialAsync(activate)`：目标为 dsh 时与以前一致（首个账号自动成为当前）；目标为 Codex / OpenCode 时，只在这次保存替换的是 dsh 当前的同一账号时让 dsh 继续指向它，并通过 `TargetRefresher` 在目标程序正登录着同一账号（账号 ID 与 e-mail 相同）时用新令牌更新它；首个账号不会自动设为任何程序的当前账号（`IAccountBackend.FirstAccountBecomesCurrent`）。
+* **边界**：这一版 API 供应商仍只有 dsh 的一套（工具栏在目标不是 dsh 时提示）；OpenCode 管理器自己的数据没有迁移。OpenCode 的所有输出都当作不可信数据：错误信息只带退出码与分类，不回显原始响应，写入体里的令牌先登记到 `SecretRegistry`。

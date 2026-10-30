@@ -59,12 +59,12 @@ install -m 0644 "$deb_files/dsh-account-manager-update.policy" \
 cat > "$root/usr/share/applications/$package.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=DSH Account Manager
-Name[zh_CN]=DSH 账号管理
-GenericName=DSH account manager
-GenericName[zh_CN]=DSH 账号管理器
-Comment=Manage DSH accounts, quotas and API providers
-Comment[zh_CN]=管理 DSH 账号、额度与 API 供应商
+Name=AI Account Manager
+Name[zh_CN]=AI 账号管理
+GenericName=AI account manager
+GenericName[zh_CN]=AI 账号管理器
+Comment=Manage dsh, Codex and OpenCode accounts, quotas and API providers
+Comment[zh_CN]=管理 dsh、Codex、OpenCode 的账号、额度与 API 供应商
 Exec=dsh-account-manager
 Icon=dsh-account-manager
 Terminal=false
@@ -75,7 +75,7 @@ DESKTOP
 chmod 0644 "$root/usr/share/applications/$package.desktop"
 
 {
-    printf 'DSH Account Manager\nCopyright (c) 2026 ruoshuixx\n\nLicense: MIT\n\n'
+    printf 'AI Account Manager\nCopyright (c) 2026 ruoshuixx\n\nLicense: MIT\n\n'
     cat "$license_file"
     printf '\nThird-party components keep their own licenses (Avalonia, SkiaSharp, CommunityToolkit.Mvvm,\nthe .NET runtime and others bundled in the single-file program).\n'
 } > "$root/usr/share/doc/$package/copyright"
@@ -92,10 +92,10 @@ Installed-Size: $installed_size
 Maintainer: ruoshuixx <16500530+ruoshuixx@users.noreply.github.com>
 Homepage: https://github.com/ruoshuixx/dsh-account-manager
 Depends: curl, ca-certificates, pkexec | policykit-1, libc6 (>= 2.31), libgcc-s1, libstdc++6, zlib1g, libfontconfig1, libfreetype6, libx11-6, libice6, libsm6, libssl3t64 | libssl3 | libssl1.1, libicu74 | libicu72 | libicu70 | libicu66
-Description: DSH account manager
- Manage the DSH accounts, quota windows and API providers stored by the
- local DSH installation: switch the active account, query remaining quota,
- import and export account files. The .NET runtime is bundled.
+Description: AI account manager (formerly DSH account manager)
+ Manage Codex accounts, quota windows and API providers: switch the active
+ account of dsh, the Codex CLI or OpenCode, query remaining quota, import and
+ export account files. The .NET runtime is bundled.
 CONTROL
 chmod 0644 "$root/DEBIAN/control"
 

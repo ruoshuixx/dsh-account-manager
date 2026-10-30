@@ -17,10 +17,12 @@ public sealed class AccountSnapshotService
     private readonly AccountMapper _mapper;
     private readonly SecretRegistry _secrets;
     private readonly SubscriptionStore? _subscriptions;
+    private readonly SwitchTargets? _targets;
 
     public AccountSnapshotService(IAccountBackend api, AccountMapper mapper, SecretRegistry secrets,
-        SubscriptionStore? subscriptions = null)
+        SubscriptionStore? subscriptions = null, SwitchTargets? targets = null)
     {
+        _targets = targets;
         _api = api;
         _mapper = mapper;
         _secrets = secrets;
@@ -63,6 +65,20 @@ public sealed class AccountSnapshotService
         }
 
         var accounts = _mapper.GetManagedAccounts(credentials, subscriptionFallback);
+
+        // The "current" marker follows the selected switch target. dsh's own flag is already on the rows.
+        var targetNote = string.Empty;
+        var target = _targets?.Selected ?? SwitchTarget.Dsh;
+        string? targetCurrent = null;
+        if (target != SwitchTarget.Dsh && _targets is not null)
+        {
+            (targetCurrent, targetNote) = await _targets.GetCurrentAsync(target, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var row in accounts.Where(a => a.Kind == AccountKind.Codex))
+        {
+            row.TargetCurrent = target == SwitchTarget.Dsh ? row.Active : targetCurrent is not null && row.CredentialId == targetCurrent;
+        }
 
         var warning = string.Empty;
         var definitions = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
@@ -114,6 +130,7 @@ public sealed class AccountSnapshotService
             Accounts = accounts,
             ProviderCount = definitions.Count,
             Warning = warning,
+            TargetNote = targetNote,
         };
     }
 }

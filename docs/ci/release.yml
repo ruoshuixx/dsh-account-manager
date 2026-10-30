@@ -77,7 +77,7 @@ jobs:
         run: |
           tag="$GITHUB_REF_NAME"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "DSH Account Manager $tag" \
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "AI Account Manager $tag" \
               --notes "Windows x64 exe and Ubuntu .deb. Confirm an upgrade in the app to download, verify and restart."
           fi
           existing="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"

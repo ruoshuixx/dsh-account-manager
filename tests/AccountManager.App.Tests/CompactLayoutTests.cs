@@ -46,11 +46,11 @@ public sealed class CompactLayoutTests : IDisposable
     private static QuotaCellViewModel Bar(double remaining, string reset)
         => new() { HasBar = true, Percent = remaining, Text = Math.Round(remaining) + "%", Level = QuotaCellViewModel.LevelForRemaining(remaining), Tooltip = "t", ResetText = reset };
 
-    private static AccountRowViewModel Codex(MainWindowViewModel vm, string id, string email, string plan, double fiveHour, double week, bool active = false, bool cli = false)
+    private static AccountRowViewModel Codex(MainWindowViewModel vm, string id, string email, string plan, double fiveHour, double week, bool active = false)
         => new(new AccountRow
         {
             Key = id, CredentialId = id, Kind = AccountKind.Codex, Label = email, Identity = email, Email = email, Plan = plan,
-            AccountId = "acct-" + id, Active = active, CliCurrent = cli, Status = "就绪", StatusCode = "Ready", SubscriptionExpires = DateTimeOffset.UtcNow.AddDays(28),
+            AccountId = "acct-" + id, Active = active, TargetCurrent = active, Status = "就绪", StatusCode = "Ready", SubscriptionExpires = DateTimeOffset.UtcNow.AddDays(28),
         }, vm)
         {
             Quota5h = Bar(fiveHour, "1h8m · 10-20 18:57"),
@@ -68,7 +68,7 @@ public sealed class CompactLayoutTests : IDisposable
     private static void Fill(MainWindowViewModel vm)
     {
         vm.Accounts.Add(Codex(vm, "c1", LongEmail, "plus", 86, 62, active: true));
-        vm.Accounts.Add(Codex(vm, "c2", LongTeamEmail, "team", 34, 12, cli: true));
+        vm.Accounts.Add(Codex(vm, "c2", LongTeamEmail, "team", 34, 12));
         vm.Accounts.Add(Codex(vm, "c3", "pro@example.test", "pro", 8, 41));
         vm.Accounts.Add(Codex(vm, "c4", "free.user@example.test", "free", 100, 100));
         vm.Accounts.Add(Codex(vm, "c5", "another.quite.long.address.for.layout.testing@subdomain.example.test", "enterprise-business", 55, 3));
@@ -85,7 +85,7 @@ public sealed class CompactLayoutTests : IDisposable
 
     private (MainWindow Window, MainWindowViewModel Vm) OpenMain(double width, double height, double zoom)
     {
-        var vm = new MainWindowViewModel(Services(), new NoDialogs(), startBackgroundWork: false);
+        var vm = new MainWindowViewModel(Services(), new NoDialogs(), startBackgroundWork: false, settingsStore: new SettingsStore(Path.Combine(_root, "settings.json")));
         Fill(vm);
         var window = new MainWindow { Width = width, Height = height, MinWidth = 100, MinHeight = 100 };
         window.FindControl<LayoutTransformControl>("ZoomHost")!.LayoutTransform = zoom < 1 ? new ScaleTransform(zoom, zoom) : null;
@@ -155,6 +155,52 @@ public sealed class CompactLayoutTests : IDisposable
     [AvaloniaTheory]
     [InlineData(1.0)]
     [InlineData(1.75)]
+    public void TheSwitchTargetBoxesAndTheApiListHintFitTheToolbar(double scaling)
+    {
+        var fitted = DialogWindowBounds.FitMainBounds(1368, 768, scaling, MainWindow.DesignMinWidth, MainWindow.DesignMinHeight,
+            MainWindow.DesignMinWidth, MainWindow.DesignMinHeight);
+        var (window, vm) = OpenMain(fitted.MinWidth, fitted.MinHeight, fitted.Zoom);
+        try
+        {
+            vm.ProviderWarning = string.Empty;
+            vm.SwitchTargetOpenCode = true; // the hint shows while Codex or OpenCode is the target
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+            var boxes = window.GetVisualDescendants().OfType<CheckBox>().Where(c => c.IsEffectivelyVisible && c.Content is string).ToList();
+            Assert.Equal(new[] { true }, boxes.Where(c => (string?)c.Content == "OpenCode").Select(c => c.IsChecked == true).ToArray());
+            Assert.Equal(new[] { "dsh", "Codex", "OpenCode" }, boxes.Where(c => (string?)c.Content is "dsh" or "Codex" or "OpenCode").Select(c => (string)c.Content!).ToArray());
+            Assert.Equal(1, boxes.Count(c => c.IsChecked == true && (string?)c.Content is "dsh" or "Codex" or "OpenCode"));
+            Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == vm.TargetHint && t.Text!.Length > 0);
+            LayoutProbe.AssertClean(window);
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void ClickingTheTickedTargetBoxLeavesItTickedAndClickingAnotherMovesTheTick()
+    {
+        var (window, vm) = OpenMain(MainWindow.DesignMinWidth, MainWindow.DesignMinHeight, 1.0);
+        try
+        {
+            CheckBox Box(string name) => window.GetVisualDescendants().OfType<CheckBox>().Single(c => (string?)c.Content == name);
+            Assert.True(Box("dsh").IsChecked);
+
+            Box("dsh").IsChecked = false; // what a click on the ticked box does to the control
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(Box("dsh").IsChecked);
+            Assert.True(vm.SwitchTargetDsh);
+
+            Box("Codex").IsChecked = true;
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(new[] { false, true, false }, new[] { Box("dsh"), Box("Codex"), Box("OpenCode") }.Select(c => c.IsChecked == true).ToArray());
+            Assert.Equal(SwitchTarget.Codex, vm.SelectedSwitchTarget);
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(1.0)]
+    [InlineData(1.75)]
     public void LongEmailsAndProviderNamesAreTrimmedInsideTheirOwnColumn(double scaling)
     {
         var fitted = DialogWindowBounds.FitMainBounds(1368, 768, scaling, MainWindow.DesignMinWidth, MainWindow.DesignMinHeight,
@@ -189,10 +235,8 @@ public sealed class CompactLayoutTests : IDisposable
 
             LayoutProbe.AssertClean(window);
             Assert.Equal(8, vm.Accounts.Count);
-            // The CLI chip sits on the row whose account the Codex CLI uses while dsh uses another one, and only there.
-            var chips = texts.Where(t => t.Text == "CLI").ToList();
-            Assert.Single(chips);
-            Assert.True(chips[0].IsEffectivelyVisible);
+            // The old "CLI" chip is gone: only the selected target's current account is marked, once.
+            Assert.DoesNotContain(texts, t => t.Text == "CLI");
             Assert.Single(texts, t => t.Text == "当前");
         }
         finally { window.Close(); }
@@ -268,7 +312,7 @@ public sealed class CompactLayoutTests : IDisposable
 
             await CheckDialog<SettingsDialog>(owner, scaling, () => SettingsDialog.ShowAsync(owner, new SettingsInput
             {
-                DetectedProfiles = new[] { "desktop", "tauri" }, CodexHome = "/home/some.very.long.user.name/work/projects/another-long-directory/.codex-home-for-layout", SwitchCodexCliToo = true, WebDavUrl = "https://dav.example.test/dav/", WebDavUsername = "user", WebDavPasswordStored = true,
+                DetectedProfiles = new[] { "desktop", "tauri" }, CodexHome = "/home/some.very.long.user.name/work/projects/another-long-directory/.codex-home-for-layout", OpenCodeCliPath = "/home/some.very.long.user.name/.local/share/ai.opencode.desktop/cli/1.2.3/opencode-cli", WebDavUrl = "https://dav.example.test/dav/", WebDavUsername = "user", WebDavPasswordStored = true,
             }));
 
             await CheckDialog<ReferenceGuardDialog>(owner, scaling, () => ReferenceGuardDialog.ShowAsync(owner, new ReferenceGuardInput

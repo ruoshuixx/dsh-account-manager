@@ -1,3 +1,4 @@
+using AccountManager.Core.Accounts;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -16,8 +17,18 @@ public sealed class AppSettings
     /// <summary>CODEX_HOME override for the Codex CLI's auth.json (null = <c>CODEX_HOME</c> environment variable or <c>~/.codex</c>).</summary>
     public string? CodexHome { get; set; }
 
-    /// <summary>Also write the account being switched to into the Codex CLI's auth.json.</summary>
-    public bool SwitchCodexCliToo { get; set; } = true;
+    /// <summary>OpenCode CLI executable override (null = auto-detect).</summary>
+    public string? OpenCodeCliPath { get; set; }
+
+    /// <summary>The one program a switch writes to: dsh, Codex (auth.json) or OpenCode.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public SwitchTarget SwitchTarget { get; set; } = SwitchTarget.Dsh;
+
+    /// <summary>
+    /// Legacy (0.1.7 - 0.1.8) "also switch the Codex CLI" flag. Only read so an old settings file loads; it has no effect
+    /// and is dropped on the next save (the switch target replaced it).
+    /// </summary>
+    public bool? SwitchCodexCliToo { get; set; }
 
     public int AutoRefreshMinutes { get; set; } = 5;
 
@@ -99,7 +110,12 @@ public sealed class SettingsStore
 
     private static AppSettings? TryLoad(string path)
     {
-        try { return File.Exists(path) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options) : null; }
+        try
+        {
+            var settings = File.Exists(path) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options) : null;
+            if (settings is not null) { settings.SwitchCodexCliToo = null; }
+            return settings;
+        }
         catch { return null; }
     }
 

@@ -7,6 +7,7 @@ using AccountManager.Core.Import;
 using AccountManager.Core.Json;
 using AccountManager.Core.Logging;
 using AccountManager.Core.Models;
+using AccountManager.Core.OpenCode;
 using AccountManager.Core.Quota;
 using AccountManager.Core.Security;
 using AccountManager.Core.Sync;
@@ -23,7 +24,10 @@ public sealed class AppServices : IAddAccountServices
     /// <param name="appDataDirectory">Test seam: where the account vault and the local mirror live.</param>
     /// <param name="log">Test seam: an already-built log.</param>
     /// <param name="backupDirectory">Test seam: where the encrypted backups go.</param>
-    public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null)
+    /// <param name="openCodeApi">Test seam: stands in for the OpenCode CLI, so no real OpenCode is ever run.</param>
+    /// <param name="vault">Test seam: a vault with its own encryption, so no real key store is used.</param>
+    /// <param name="backups">Test seam: a backup service with its own encryption.</param>
+    public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null, IOpenCodeCredentialApi? openCodeApi = null, AccountVault? vault = null, BackupService? backups = null)
     {
         Settings = settings;
         Secrets = new SecretRegistry();
@@ -31,16 +35,19 @@ public sealed class AppServices : IAddAccountServices
         Log = log ?? new AppLog(Secrets, LogDirectory);
 
         Home = ResolveHome(settings);
-        Vault = new AccountVault(appDataDirectory ?? AccountVault.DefaultDirectory());
-        Backups = backupDirectory is null ? new BackupService() : new BackupService(backupDirectory);
+        Vault = vault ?? new AccountVault(appDataDirectory ?? AccountVault.DefaultDirectory());
+        Backups = backups ?? (backupDirectory is null ? new BackupService() : new BackupService(backupDirectory));
         Subscriptions = new SubscriptionStore(Vault.Directory, Log);
         CodexCli = new CodexCliAuthStore(() => Settings.CodexHome, Backups);
         Verifier = new DshRuntimeVerifier();
         Backend = new DshBackend(Home, Vault, Secrets, Subscriptions, Log, Verifier)
         {
-            CodexCli = CodexCli,
-            CodexCliEnabled = () => Settings.SwitchCodexCliToo,
+            SelectedTarget = () => Settings.SwitchTarget,
         };
+        OpenCodeCli = new OpenCodeCli(new OpenCodeCliOptions { CliPath = settings.OpenCodeCliPath }, Secrets, Log);
+        OpenCodeAccounts = new OpenCodeAccountStore(openCodeApi ?? new OpenCodeApi(OpenCodeCli, Secrets), Secrets, Log);
+        Targets = new SwitchTargets(Backend, Vault, CodexCli, OpenCodeAccounts, Secrets, Log, () => Settings.SwitchTarget);
+        Backend.TargetRefresher = Targets.RefreshIfCurrentAsync;
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
         SubagentRoutes = new SubagentRouteService(() => Backend.Home, Backups, Secrets, Log);
         Backend.Subagents = SubagentRoutes;
@@ -48,8 +55,8 @@ public sealed class AppServices : IAddAccountServices
             new CodexModelCatalogClient("dsh-account-manager/" + AppUpdateInfo.DisplayVersion), new CodexModelOwnership(Vault.Directory));
         Backend.Fast = CodexFast;
         Mapper = new AccountMapper(Secrets);
-        Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
-        Switch = new SwitchService(Backend, Mapper);
+        Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions, Targets);
+        Switch = new SwitchService(Backend, Mapper, Targets);
         Quota = new QuotaService();
         Subscription = new SubscriptionService();
         SubscriptionRefresher = new SubscriptionRefresher(Subscription, Log);
@@ -78,6 +85,13 @@ public sealed class AppServices : IAddAccountServices
     public DshBackend Backend { get; }
 
     public CodexCliAuthStore CodexCli { get; }
+
+    public OpenCodeCli OpenCodeCli { get; }
+
+    public IOpenCodeAccounts OpenCodeAccounts { get; }
+
+    /// <summary>dsh, Codex and OpenCode as switch targets.</summary>
+    public SwitchTargets Targets { get; }
 
     public DshRuntimeVerifier Verifier { get; }
 
@@ -124,6 +138,9 @@ public sealed class AppServices : IAddAccountServices
         Backend.SetHome(Home);
     }
 
+    /// <summary>Points the OpenCode CLI at the path chosen in Settings (null = auto-detect).</summary>
+    public void ApplyOpenCodeCliPath() => OpenCodeCli.SetCliPath(Settings.OpenCodeCliPath);
+
     /// <summary>The status line shown next to the read button.</summary>
     public string DshStatus => "DSH：" + Home.Root + " · 档案 " + Home.Profile + (Home.ProfileExists ? string.Empty : "（未找到）");
 
@@ -157,6 +174,14 @@ public sealed class AppServices : IAddAccountServices
 
     public Task<SwitchResult> SwitchAsync(string credentialId, CancellationToken ct = default)
         => Switch.SwitchAsync(credentialId, ct);
+
+    /// <summary>The other programs (not the selected target) that currently use this account; switching to it would share its refresh token.</summary>
+    public Task<IReadOnlyList<SwitchTarget>> GetOtherTargetUsersAsync(string credentialId, CancellationToken ct = default)
+        => Targets.GetOtherUsersAsync(credentialId, Settings.SwitchTarget, ct);
+
+    /// <summary>The vault ids of every account some other program than the selected target currently uses (auto-switch skips them).</summary>
+    public async Task<IReadOnlySet<string>> GetIdsUsedByOtherTargetsAsync(CancellationToken ct = default)
+        => (await Targets.GetUsedByOthersAsync(Settings.SwitchTarget, ct).ConfigureAwait(false)).Keys.ToHashSet(StringComparer.Ordinal);
 
     public Task<DeleteResult> DeleteAsync(AccountRow row, CancellationToken ct = default)
         => Actions.RemoveManagedAccountAsync(row.CredentialId, row.Provider, ct);

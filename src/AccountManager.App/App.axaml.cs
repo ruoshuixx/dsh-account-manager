@@ -80,7 +80,7 @@ public partial class App : Application
     {
         try
         {
-            _tray = new TrayIcon { ToolTipText = "DSH 账号管理", IsVisible = true };
+            _tray = new TrayIcon { ToolTipText = "AI 账号管理", IsVisible = true };
             try
             {
                 using var stream = AssetLoader.Open(new Uri("avares://DshAccountManager/Assets/app.ico"));

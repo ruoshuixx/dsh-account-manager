@@ -2,12 +2,12 @@
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
 <policyconfig>
-  <vendor>DSH Account Manager</vendor>
+  <vendor>AI Account Manager</vendor>
   <action id="io.github.ruoshuixx.dsh-account-manager.update">
-    <description>Install an DSH Account Manager update</description>
-    <description xml:lang="zh_CN">安装 DSH 账号管理的更新</description>
-    <message>Authentication is required to install an DSH Account Manager update</message>
-    <message xml:lang="zh_CN">安装 DSH 账号管理的更新需要管理员授权</message>
+    <description>Install an AI Account Manager update</description>
+    <description xml:lang="zh_CN">安装 AI 账号管理的更新</description>
+    <message>Authentication is required to install an AI Account Manager update</message>
+    <message xml:lang="zh_CN">安装 AI 账号管理的更新需要管理员授权</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

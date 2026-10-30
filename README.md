@@ -1,20 +1,26 @@
-# DSH 账号管理（DSH Account Manager）
+# AI 账号管理（AI Account Manager，原 DSH 账号管理）
 
-给 DeepSeek Harness（**dsh**）用的桌面小工具：切换 dsh 内置的 Codex（ChatGPT）账号、管理 API 供应商、查询额度、导入导出账号文件。
+给 DeepSeek Harness（**dsh**）、**Codex** 和 **OpenCode** 用的桌面小工具：把同一批 ChatGPT（Codex）账号切给其中一个程序、管理 dsh 的 API 供应商、查询额度、导入导出账号文件。
 **同一套 C# / Avalonia 代码，在 Windows 与 Ubuntu 桌面上运行**，界面完全一致。
 
 - 技术栈：.NET 8 + Avalonia 11。
 - 许可证：[MIT](LICENSE)。
-- 下载：[GitHub Releases](https://github.com/ruoshuixx/dsh-account-manager/releases/latest)（Windows 单文件 exe；Ubuntu / Debian 的 .deb 安装包）。
+- 下载：[GitHub Releases](https://github.com/ruoshuixx/dsh-account-manager/releases/latest)（Windows 单文件 exe；Ubuntu / Debian 的 .deb 安装包）。仓库名、程序文件名、安装包名、数据目录都没有变，旧版本可以直接在程序里升级。
 
-> **声明**：这是个人开发的非官方工具，与 DeepSeek、OpenAI 没有任何关联。它只改它自己负责的那一小部分 dsh 配置；
+> **声明**：这是个人开发的非官方工具，与 DeepSeek、OpenAI、OpenCode 没有任何关联。它只改它自己负责的那一小部分 dsh 配置；
 > 第三方插件（例如 `dsh-subscriptions`）的数据一律不读不写。账号令牌和 API Key 是敏感信息，请自行妥善保管导出的文件。
 
 ## 它能做什么
 
-- **切换 dsh 内置的 Codex 账号**：dsh 同一时间只认一个 Codex 账号。本工具把你所有的 Codex 账号保存在自己的加密账号库里，
-  点「切号」就把目标账号写成 dsh 当前的 Codex 凭据（dsh 运行中会热加载，不用重启）。
-  - **同时切换 Codex（CLI / 桌面版）**（设置里的开关，默认开；主界面工具栏的“同时切 Codex”勾选同步这个开关）：切号成功后，把同一个账号也写进 Codex 的 `auth.json`（Codex CLI 与桌面版共用这个文件，已打开的桌面版需重启才生效）（`$CODEX_HOME/auth.json`，默认 `~/.codex/auth.json`；设置里可改目录）。写之前先加密备份、原子替换并保持 0600、保留文件里其它键，并先把 Codex CLI 自己刷新过的较新令牌写回账号库（用 Codex CLI 自己登录的账号也会先收进账号库）。目录不存在就跳过（不会创建）；凭据存在系统密钥环时只提示不处理；失败不影响 dsh 的切号，状态栏会写“Codex CLI 未同步：原因”。dsh 和 Codex CLI 共用同一份登录令牌，列表里 Codex CLI 用的账号与 dsh 不同时会显示“CLI”标记。
+- **把 Codex 账号切给 dsh / Codex / OpenCode 之一**：本工具把你所有的 Codex 账号保存在自己的加密账号库里。工具栏“删除”按钮旁有三个勾选框 **dsh / Codex / OpenCode**，**永远只勾一个**（点已勾的那个还是勾着；这是“切换目标”，设置会记住，默认 dsh）。
+  切号（手动点「切号」、自动切号、导入或添加时需要把账号设为当前）**只写你勾选的那一个程序**，其它两个一个字节都不动：
+  - **dsh**：把目标账号写成 dsh 当前的 Codex 凭据（dsh 运行中会热加载，不用重启）。不再顺带写 Codex 的 `auth.json`。
+  - **Codex**：把账号写进 `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`，设置里可改目录；Codex CLI 与桌面版共用这个文件，已打开的桌面版需重启才生效）。写之前先加密备份、原子替换并保持 0600、保留文件里其它键；目录不存在（不会创建）、凭据存在系统密钥环、文件只读 / 格式不认识 / 是 API Key 登录时，切号失败并说明原因，什么都不改。
+  - **OpenCode**：通过 OpenCode 的命令行（`opencode api …`）把账号设为 OpenCode 里 `openai` 的当前 OAuth 凭据：OpenCode 里已有同一账号的凭据就复用（账号库的令牌更新时先换成新令牌）再激活，没有就新建并激活。需要已安装 OpenCode；找不到命令行时切号失败并提示，设置里的“OpenCode 命令路径”可手动指定（留空自动检测）。
+  - **为什么只能选一个**：同一个 refresh token 被多个程序同时用，其中一个刷新后，别的程序再用就会报 `refresh_token_reused`。所以切号前如果该账号正是另一个程序（目标之外的 dsh / Codex / OpenCode）当前在用的账号，手动切号会先弹确认说明风险；自动切号直接跳过这类账号。
+  - 切号前，先把 dsh、Codex 的 `auth.json`、OpenCode 里同一账号**较新**的令牌写回账号库（用 Codex 自己登录、账号库里还没有的账号也会先收进账号库），保证账号库里永远是最新的 refresh token。
+  - 账号列表的“当前”标记跟着所选目标走（dsh 看它的授权、Codex 看 `auth.json`、OpenCode 看当前的 openai 凭据）。状态栏会写明切的是哪个：“已切换 OpenCode 账号：…”。
+  - 这一版里 API 供应商仍是 dsh 的（目标选 Codex / OpenCode 时工具栏会提示）。
   - 切号前，如果 dsh 已经刷新了当前账号的令牌，会先把**较新**的令牌写回账号库，绝不用旧令牌覆盖新令牌。
   - dsh 里原本登录的、账号库里还没有的账号，会被自动收进账号库并显示为当前账号。
   - 在一个还没有 Codex 路由的档案里切号时，会顺带启用内置的 `openai-codex` 路由并写入官方现行 Codex 模型（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，只写 id；已有的条目不动；只有“完全是空的”条目（0.1.2 写入的 `openai-codex: {}`，没有任何用户选择）会在导入或切号时补全成这份列表，补全前先做加密备份；只要条目里有任何一个键就保持原样）。
@@ -101,7 +107,8 @@ sudo apt remove dsh-account-manager                          # 卸载
 | dsh 当前的 Codex 账号 | `$DSH_HOME/.credentials.yaml` 的 `records["llm-pi-ai/openai-codex"]`（`kind: grant`） |
 | API Key | 同一文件的 `refs.<名称>`（名称 = 供应商的 `apiKeyEnv`；新建供应商用 `<供应商ID大写>_API_KEY`） |
 | API 供应商 | `$DSH_HOME/profiles/<档案>/cordis.patch.yml` 里 `llm-pi-ai` 的 `config.providers.<ID>` |
-| Codex CLI 当前账号（可选） | `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`）的 `tokens` 与 `last_refresh`，其它键不动 |
+| Codex 当前账号（切换目标选 Codex 时） | `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`）的 `tokens` 与 `last_refresh`，其它键不动 |
+| OpenCode 当前账号（切换目标选 OpenCode 时） | 不直接读写文件，通过 OpenCode 命令行 `opencode api …` 操作它的 `openai` 凭据 |
 | 全部 Codex 账号（多账号） | 加密账号库：Linux `~/.config/DshAccountManager/accounts.vault`，Windows `%LOCALAPPDATA%\DshAccountManager\accounts.vault` |
 | 导入的 Cockpit 原始字段缓存 | 账号库同目录的 `account-manager-state.json`（敏感字段已密封） |
 | 加密备份 | Linux `~/.local/share/DshAccountManager/Backups`，Windows `%LOCALAPPDATA%\DshAccountManager\Backups` |
@@ -118,7 +125,7 @@ sudo apt remove dsh-account-manager                          # 卸载
 
 - 所有写入（添加 / 删除 / API 保存 / 导入 / 修复引用）先做加密备份；删除后会回读确认。
 - 令牌和 Key 不会出现在界面、日志或错误信息里；导出的 JSON 是明文，仅在你明确选择导出时生成。
-- 切号只改写 dsh 的当前 Codex 凭据，不重启 dsh，也不会自动刷新登录；令牌过期的账号需要重新授权。
+- 切号只写你勾选的那一个程序（dsh 的当前 Codex 凭据、Codex 的 `auth.json` 或 OpenCode 的当前 openai 凭据），不重启任何程序，也不会自动刷新登录；令牌过期的账号需要重新授权。
 
 ## 添加 Codex 账号（浏览器授权）
 
@@ -127,7 +134,7 @@ sudo apt remove dsh-account-manager                          # 卸载
 3. 核对显示的邮箱和工作区，点击「保存账号」。已存在的账号需要确认后才会更新。
 
 授权使用 PKCE 与随机 state，只监听 `127.0.0.1`（优先 1455，被占用时用 1457），10 分钟超时；关闭窗口或切到 API 选项卡会取消授权并释放端口。
-添加不会切换 dsh 已有的当前账号；dsh 还没有当前 Codex 账号时，新账号会成为当前账号。
+添加不会切换已有的当前账号；切换目标是 dsh 且 dsh 还没有当前 Codex 账号时，新账号会成为当前账号（目标是 Codex / OpenCode 时不会替你切）。
 
 ## 从源码构建
 

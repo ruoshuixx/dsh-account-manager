@@ -57,6 +57,9 @@ public interface IAccountBackend
 
     Task<ProviderRuntimeVerification> VerifyProviderAsync(string providerId, string expectedApi, CancellationToken cancellationToken = default);
 
-    /// <summary>The status-line note of the last activation's Codex CLI step ("Codex CLI 未同步：…"), empty when nothing is worth saying.</summary>
-    string LastCodexCliNote => string.Empty;
+    /// <summary>
+    /// Whether the first account saved while nothing is current becomes the current one. False when the switch target is
+    /// not dsh: saving an account never switches another program.
+    /// </summary>
+    bool FirstAccountBecomesCurrent => true;
 }

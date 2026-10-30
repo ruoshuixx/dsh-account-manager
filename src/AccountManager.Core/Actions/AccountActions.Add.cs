@@ -168,7 +168,7 @@ public sealed partial class AccountActions
             var newId = preview.NewCredentialId;
             if (before.Any(c => Ordinal(GetString(c, "id"), newId))) { throw new DshException("新账号 ID 已存在，未重复写入；请先读取账号。"); }
             var activate = old is not null && JsonNum.ToBool(GetValue(old, "active"));
-            var firstAccount = !before.Any(c => Ordinal(GetString(c, "integrationID"), "openai") && JsonNum.ToBool(GetValue(c, "active")));
+            var firstAccount = _api.FirstAccountBecomesCurrent && !before.Any(c => Ordinal(GetString(c, "integrationID"), "openai") && JsonNum.ToBool(GetValue(c, "active")));
             var expectedActive = activate || firstAccount;
             var warning = firstAccount ? "dsh 之前没有当前 Codex 账号，已把这个账号设为当前账号。" : string.Empty;
             // Capture the real creation time at save, not at OAuth preview/export. For an update,

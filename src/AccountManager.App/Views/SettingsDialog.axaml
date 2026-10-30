@@ -9,7 +9,8 @@
   <Window.Resources>
     <x:String x:Key="HomeHelp">留空自动使用环境变量 DSH_HOME 或 ~/.dsh。账号库与凭据都按这里定位；一般不需要填写。</x:String>
     <x:String x:Key="ProfileHelp">留空自动检测：先 desktop（官方桌面版），再 tauri（dsh-tauri），再 profiles 下第一个其它档案。供应商配置写入该档案的 cordis.patch.yml。</x:String>
-    <x:String x:Key="CodexHomeHelp">切号时一并写入 Codex 的 auth.json（Codex CLI 与桌面版共用；桌面版已打开时需重启才生效）。留空自动使用环境变量 CODEX_HOME 或 ~/.codex（Windows 为 %USERPROFILE%\.codex）。目录不存在时不会创建；凭据存在系统密钥环（cli_auth_credentials_store = keyring）时不处理。</x:String>
+    <x:String x:Key="CodexHomeHelp">切换目标选“Codex”时写入这里的 auth.json（Codex CLI 与桌面版共用；桌面版已打开时需重启才生效）。留空自动使用环境变量 CODEX_HOME 或 ~/.codex（Windows 为 %USERPROFILE%\.codex）。目录不存在时不会创建；凭据存在系统密钥环（cli_auth_credentials_store = keyring）时不处理。</x:String>
+    <x:String x:Key="OpenCodeHelp">切换目标选“OpenCode”时通过 OpenCode 的命令行（opencode api）写入账号。留空自动检测桌面版附带的 CLI；检测失败时可手动选择 opencode 或 opencode-cli 可执行文件。</x:String>
     <x:String x:Key="RefreshHelp">自动刷新查询当前 Codex 账号；启动时会读取账号并查询一轮。列表勾选只影响手动刷新。开启自动切号后会定期检查全部 Codex 账号。</x:String>
     <x:String x:Key="SwitchHelp">按额度消耗速度提前切号，预留 5 小时窗口 5%、周窗口 2%；优先同团队及有余额的账号，已耗尽账号不参与。额度偏低时自动缩短查询间隔。</x:String>
     <x:String x:Key="WebDavHelp">上传导出带时间戳的账号 JSON；下载取最新文件进入导入预览。请使用 HTTPS 和可信服务端。坚果云等需要第三方应用密码，不要填写登录密码。</x:String>
@@ -47,13 +48,22 @@
 
         <Separator Margin="0,2" />
         <StackPanel Orientation="Horizontal" Spacing="6">
-          <CheckBox x:Name="CliSwitchBox" Content="同时切换 Codex（CLI / 桌面版）" VerticalAlignment="Center" ToolTip.Tip="{StaticResource CodexHomeHelp}" />
+          <TextBlock Text="Codex 主目录" FontWeight="SemiBold" VerticalAlignment="Center" />
           <Button Classes="help" Content="ⓘ" ToolTip.Tip="{StaticResource CodexHomeHelp}" Click="OnHelp" />
         </StackPanel>
-        <TextBlock Text="Codex 主目录" FontWeight="SemiBold" />
         <Grid ColumnDefinitions="*,Auto">
           <TextBox x:Name="CodexHomeBox" Watermark="自动（CODEX_HOME 或 ~/.codex）" ToolTip.Tip="{StaticResource CodexHomeHelp}" />
           <Button Grid.Column="1" Classes="toolbar" Content="浏览…" Click="OnBrowseCodex" Margin="8,0,0,0" />
+        </Grid>
+
+        <Separator Margin="0,2" />
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <TextBlock Text="OpenCode 命令路径" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <Button Classes="help" Content="ⓘ" ToolTip.Tip="{StaticResource OpenCodeHelp}" Click="OnHelp" />
+        </StackPanel>
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBox x:Name="OpenCodeCliBox" Watermark="自动检测" ToolTip.Tip="{StaticResource OpenCodeHelp}" />
+          <Button Grid.Column="1" Classes="toolbar" Content="浏览…" Click="OnBrowseOpenCode" Margin="8,0,0,0" />
         </Grid>
 
         <Separator Margin="0,2" />

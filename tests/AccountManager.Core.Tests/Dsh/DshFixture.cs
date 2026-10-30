@@ -6,6 +6,7 @@ using AccountManager.Core.Dsh;
 using AccountManager.Core.Export;
 using AccountManager.Core.Import;
 using AccountManager.Core.Logging;
+using AccountManager.Core.OpenCode;
 using AccountManager.Core.Security;
 
 namespace AccountManager.Core.Tests;
@@ -98,8 +99,14 @@ internal sealed class DshFixture : IDisposable
         Fast = new CodexFastService(() => Home, Backups, Secrets, Log, Subagents, () => catalogModels ?? new Dictionary<string, JsonObject>(), codexClient, ownership);
         if (fast) { Backend.Fast = Fast; }
         Mapper = new AccountMapper(Secrets);
-        Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
-        Switch = new SwitchService(Backend, Mapper);
+        CodexStore = new CodexCliAuthStore(() => CodexHome, Backups, _ => null, () => Root);
+        OpenCodeApi = new FakeOpenCodeApi { Unavailable = true };
+        OpenCode = new OpenCodeAccountStore(OpenCodeApi, Secrets, Log);
+        Targets = new SwitchTargets(Backend, Vault, CodexStore, OpenCode, Secrets, Log, () => Target);
+        Backend.SelectedTarget = () => Target;
+        Backend.TargetRefresher = Targets.RefreshIfCurrentAsync;
+        Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions, Targets);
+        Switch = new SwitchService(Backend, Mapper, Targets);
         Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References) { FastInstaller = Fast.Installer };
         Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, subagents ? Subagents : null, fast ? Fast : null);
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
@@ -131,19 +138,29 @@ internal sealed class DshFixture : IDisposable
     public ImportService Import { get; }
     public ExportService Export { get; }
 
+    /// <summary>The selected switch target (the app's setting).</summary>
+    public SwitchTarget Target { get; set; } = SwitchTarget.Dsh;
+    public CodexCliAuthStore CodexStore { get; }
+    public FakeOpenCodeApi OpenCodeApi { get; }
+    public IOpenCodeAccounts OpenCode { get; }
+    public SwitchTargets Targets { get; }
+
     public string CodexHome => Path.Combine(Root, "codex");
     public string CodexAuthPath => Path.Combine(CodexHome, "auth.json");
-    public bool CliEnabled { get; set; } = true;
 
-    /// <summary>Turns the Codex CLI step on, against a temp CODEX_HOME that exists only when <paramref name="createHome"/>.</summary>
+    /// <summary>Prepares the temp CODEX_HOME (it exists only when <paramref name="createHome"/>); nothing is switched by this.</summary>
     public CodexCliAuthStore UseCli(bool createHome = true, string? authJson = null)
     {
         if (createHome) { Directory.CreateDirectory(CodexHome); }
         if (authJson is not null) { File.WriteAllText(CodexAuthPath, authJson); }
-        var store = new CodexCliAuthStore(() => CodexHome, Backups, _ => null, () => Root);
-        Backend.CodexCli = store;
-        Backend.CodexCliEnabled = () => CliEnabled;
-        return store;
+        return CodexStore;
+    }
+
+    /// <summary>Makes the fake OpenCode available (it is "not installed" by default).</summary>
+    public FakeOpenCodeApi UseOpenCode()
+    {
+        OpenCodeApi.Unavailable = false;
+        return OpenCodeApi;
     }
 
     /// <summary>An auth.json as Codex CLI writes it, for a synthetic account.</summary>
@@ -211,5 +228,84 @@ internal sealed class DshFixture : IDisposable
             Calls.Add((providerId, expectedApi));
             return Task.FromResult(new ProviderRuntimeVerification(State, State == ProviderRuntimeState.Applied ? DshRuntimeVerifier.AppliedMessage : DshRuntimeVerifier.UnavailableMessage));
         }
+    }
+}
+
+/// <summary>An in-memory OpenCode credential API; "Unavailable" behaves like a missing CLI. No real OpenCode is ever run.</summary>
+internal sealed class FakeOpenCodeApi : IOpenCodeCredentialApi
+{
+    public bool Unavailable { get; set; }
+
+    public List<JsonObject> Credentials { get; } = new();
+
+    public List<string> Calls { get; } = new();
+
+    public bool FailDelete { get; set; }
+
+    private void Check()
+    {
+        if (Unavailable) { throw new OpenCodeException("找不到 OpenCode CLI。请先启动桌面版一次，或在设置中手动选择 CLI 文件。"); }
+    }
+
+    public JsonObject AddLogin(string email, string accountId, string refresh, bool active = false, long exp = 4102444800L, string id = "", string integration = "openai")
+    {
+        var credential = new JsonObject
+        {
+            ["id"] = id.Length > 0 ? id : "oc_" + Guid.NewGuid().ToString("N")[..8],
+            ["integrationID"] = integration,
+            ["label"] = email,
+            ["active"] = active,
+            ["value"] = new JsonObject
+            {
+                ["type"] = "oauth",
+                ["methodID"] = "chatgpt-browser",
+                ["access"] = TestAccounts.AccessToken(email, accountId, exp),
+                ["refresh"] = refresh,
+                ["expires"] = exp * 1000,
+                ["metadata"] = new JsonObject { ["accountID"] = accountId, ["cockpitEmail"] = email, ["id_token"] = "oc-id-token" },
+            },
+        };
+        Credentials.Add(credential);
+        return credential;
+    }
+
+    public JsonObject? Find(string id) => Credentials.FirstOrDefault(c => c["id"]!.GetValue<string>() == id);
+
+    public string? ActiveId => Credentials.Where(c => c["integrationID"]!.GetValue<string>() == "openai" && c["active"]!.GetValue<bool>())
+        .Select(c => c["id"]!.GetValue<string>()).SingleOrDefault();
+
+    public Task<JsonArray> GetCredentialsAsync(CancellationToken cancellationToken = default)
+    {
+        Check();
+        return Task.FromResult(new JsonArray(Credentials.Select(c => (JsonNode?)c.DeepClone()).ToArray()));
+    }
+
+    public Task<string> CreateCredentialAsync(string integrationId, string label, JsonObject value, bool activate, CancellationToken cancellationToken = default, string? requestedId = null)
+    {
+        Check();
+        Calls.Add("create:" + integrationId + ":" + activate);
+        var id = requestedId ?? "oc_" + Guid.NewGuid().ToString("N")[..8];
+        if (activate) { foreach (var c in Credentials.Where(c => c["integrationID"]!.GetValue<string>() == integrationId)) { c["active"] = false; } }
+        Credentials.Add(new JsonObject { ["id"] = id, ["integrationID"] = integrationId, ["label"] = label, ["active"] = activate, ["value"] = value.DeepClone() });
+        return Task.FromResult(id);
+    }
+
+    public Task ActivateCredentialAsync(string credentialId, CancellationToken cancellationToken = default)
+    {
+        Check();
+        Calls.Add("activate:" + credentialId);
+        var target = Find(credentialId) ?? throw new OpenCodeException("OpenCode 请求失败，退出码 1；分类：NotFound。");
+        foreach (var c in Credentials.Where(c => c["integrationID"]!.GetValue<string>() == target["integrationID"]!.GetValue<string>())) { c["active"] = false; }
+        target["active"] = true;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteCredentialAsync(string credentialId, CancellationToken cancellationToken = default)
+    {
+        Check();
+        Calls.Add("delete:" + credentialId);
+        if (FailDelete) { throw new OpenCodeException("OpenCode 请求失败，退出码 1；分类：Conflict。"); }
+        Credentials.RemoveAll(c => c["id"]!.GetValue<string>() == credentialId);
+        return Task.CompletedTask;
     }
 }

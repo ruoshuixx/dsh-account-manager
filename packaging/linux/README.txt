@@ -1,4 +1,4 @@
-DSH Account Manager — Linux x64 portable package
+AI Account Manager (formerly DSH Account Manager) — Linux x64 portable package
 
 Targets: Ubuntu 22.04, 24.04, and 26.04 x64 are intended targets, but this
 package has not yet been verified on those systems. Ubuntu 20.04 is best-effort.

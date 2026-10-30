@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using AccountManager.App.Services;
+using AccountManager.Core.Accounts;
 using AccountManager.Core.Import;
 using AccountManager.Core.Models;
 using AccountManager.Core.Dsh;
@@ -23,6 +24,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     private readonly Dictionary<string, (string IdentityKey, AccountQuotaResult Result)> _quotaCache = new(StringComparer.Ordinal);
     private ImportPreview? _pendingImport;
     private bool _quotaRunning;
+    private readonly bool _backgroundWork;
+    private readonly SettingsStore _settingsStore;
 
     // Stateless opener shared across invocations (keeps the instance API used by tests).
     private static readonly ShellLauncher SharedLauncher = new();
@@ -31,10 +34,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     /// False (layout tests) skips the auto-refresh timer and the startup read + quota pass, so nothing runs until a
     /// command is invoked and no quota request is ever made.
     /// </param>
-    public MainWindowViewModel(AppServices services, IDialogService dialogs, bool startBackgroundWork = true)
+    /// <param name="settingsStore">Test seam: where the settings are saved (default: the app's own settings file).</param>
+    public MainWindowViewModel(AppServices services, IDialogService dialogs, bool startBackgroundWork = true, SettingsStore? settingsStore = null)
     {
+        _settingsStore = settingsStore ?? new SettingsStore();
         _services = services;
         _dialogs = dialogs;
+        _backgroundWork = startBackgroundWork;
         _services.Log.EntryWritten += (_, entry) => OnLog(entry);
         _autoRefreshMinutes = Math.Max(1, services.Settings.AutoRefreshMinutes);
         _logExpanded = services.Settings.LogExpanded;
@@ -133,20 +139,68 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         PersistSettings();
     }
 
-    private void PersistSettings() => new SettingsStore().Save(_services.Settings);
+    private void PersistSettings() => _settingsStore.Save(_services.Settings);
 
-    /// <summary>Toolbar tick: also write the activated account to Codex's shared auth.json (CLI and desktop app).</summary>
-    public bool SwitchCodexToo
+    // ---- switch target -------------------------------------------------------
+    // Three tick boxes ("dsh", "Codex", "OpenCode") of which exactly one is ticked at all times: a refresh token that
+    // several programs share is rejected (refresh_token_reused) as soon as one of them refreshes it.
+
+    public SwitchTarget SelectedSwitchTarget => _services.Settings.SwitchTarget;
+
+    public bool SwitchTargetDsh
     {
-        get => _services.Settings.SwitchCodexCliToo;
-        set
-        {
-            if (_services.Settings.SwitchCodexCliToo == value) { return; }
-            _services.Settings.SwitchCodexCliToo = value;
-            PersistSettings();
-            OnPropertyChanged();
-        }
+        get => SelectedSwitchTarget == SwitchTarget.Dsh;
+        set => SelectSwitchTarget(SwitchTarget.Dsh, value);
     }
+
+    public bool SwitchTargetCodex
+    {
+        get => SelectedSwitchTarget == SwitchTarget.Codex;
+        set => SelectSwitchTarget(SwitchTarget.Codex, value);
+    }
+
+    public bool SwitchTargetOpenCode
+    {
+        get => SelectedSwitchTarget == SwitchTarget.OpenCode;
+        set => SelectSwitchTarget(SwitchTarget.OpenCode, value);
+    }
+
+    /// <summary>Test seam: select a target without a click (no read is started).</summary>
+    internal void SelectSwitchTargetForTest(SwitchTarget target)
+    {
+        _services.Settings.SwitchTarget = target;
+        NotifySwitchTargetChanged();
+    }
+
+    /// <summary>Ticking a box selects its target; un-ticking the selected one is refused (it stays ticked).</summary>
+    private void SelectSwitchTarget(SwitchTarget target, bool ticked)
+    {
+        var changed = ticked && SelectedSwitchTarget != target;
+        if (changed)
+        {
+            _services.Settings.SwitchTarget = target;
+            PersistSettings();
+        }
+
+        NotifySwitchTargetChanged();
+        // An un-tick that was refused: the box must show the tick again once the binding has finished its update.
+        if (!ticked) { Dispatcher.UIThread.Post(NotifySwitchTargetChanged); }
+        if (changed && _backgroundWork && !IsBusy) { _ = ReadDshAsync(); }
+    }
+
+    private void NotifySwitchTargetChanged()
+    {
+        OnPropertyChanged(nameof(SelectedSwitchTarget));
+        OnPropertyChanged(nameof(SwitchTargetDsh));
+        OnPropertyChanged(nameof(SwitchTargetCodex));
+        OnPropertyChanged(nameof(SwitchTargetOpenCode));
+        OnPropertyChanged(nameof(TargetHint));
+    }
+
+    /// <summary>Shown beside the toolbar while Codex or OpenCode is the target: the API provider list below is still dsh's.</summary>
+    public string TargetHint => SelectedSwitchTarget == SwitchTarget.Dsh || ProviderWarning.Length > 0 ? string.Empty : "API 列表为 dsh 的供应商";
+
+    partial void OnProviderWarningChanged(string value) => OnPropertyChanged(nameof(TargetHint));
 
     private void OnLog(Core.Logging.LogEntry entry)
     {
@@ -173,8 +227,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         {
             var snapshot = await Task.Run(() => _services.LoadSnapshotAsync()).ConfigureAwait(true);
             ApplySnapshot(snapshot);
-            StatusText = "已读取 " + snapshot.Accounts.Count + " 个账号。" + (_cliNote.Length > 0 ? " · " + _cliNote : string.Empty);
-            _cliNote = string.Empty;
+            StatusText = "已读取 " + snapshot.Accounts.Count + " 个账号。";
             _ = CheckReferencesAsync();
         }
         catch (Exception ex)
@@ -194,7 +247,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
         // Stable pin: the saved current Codex account goes first; everything else keeps order.
         var ordered = snapshot.Accounts
-            .OrderByDescending(a => a.Kind == AccountKind.Codex && a.Active)
+            .OrderByDescending(a => a.Kind == AccountKind.Codex && a.TargetCurrent)
             .ToList();
 
         Accounts.Clear();
@@ -226,8 +279,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         var api = Accounts.Count(a => a.IsApi);
         var current = Accounts.FirstOrDefault(a => a.IsCurrent);
         SummaryText = "共 " + Accounts.Count + " 项（Codex " + codex + " · API " + api + "） · 供应商 " + snapshot.ProviderCount;
-        CurrentText = current is null ? "当前账号：—" : "当前账号：" + current.Title;
-        ProviderWarning = snapshot.Warning;
+        CurrentText = current is null ? "当前账号：—" : "当前账号（" + SelectedSwitchTarget.Display() + "）：" + current.Title;
+        ProviderWarning = string.Join("；", new[] { snapshot.Warning, snapshot.TargetNote }.Where(t => !string.IsNullOrEmpty(t)));
         UpdateDshStatus();
         OnPropertyChanged(nameof(SelectAllVisibleChecked));
     }
@@ -381,28 +434,50 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
     // ---- row actions -------------------------------------------------------
 
-    private string _cliNote = string.Empty;
+    public Task SwitchAsync(AccountRowViewModel row) => SwitchCoreAsync(row, interactive: true);
 
-    public async Task SwitchAsync(AccountRowViewModel row)
+    /// <summary>
+    /// Switches the selected target to this account. When another program currently uses the same account both would
+    /// share one refresh token and may invalidate each other: a manual switch asks first, the automatic one never gets here.
+    /// </summary>
+    private async Task SwitchCoreAsync(AccountRowViewModel row, bool interactive)
     {
         if (IsBusy) { return; }
-        if (row.Row.Active && !row.Row.CliPending)
+        var target = _services.Settings.SwitchTarget;
+        var name = target.Display();
+        if (row.IsCurrent)
         {
-            StatusText = row.Title + " 已经是当前账号。";
+            StatusText = row.Title + " 已经是 " + name + " 的当前账号。";
             return;
         }
 
         IsBusy = true;
-        StatusText = "正在切换账号 …";
+        StatusText = "正在切换 " + name + " 账号 …";
         try
         {
+            IReadOnlyList<SwitchTarget> others;
+            try { others = await Task.Run(() => _services.GetOtherTargetUsersAsync(row.Row.CredentialId)).ConfigureAwait(true); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { others = Array.Empty<SwitchTarget>(); _services.Log.Warn("无法确认其它程序是否在用该账号：" + _services.Secrets.Redact(ex.Message)); }
+            if (others.Count > 0)
+            {
+                if (!interactive)
+                {
+                    StatusText = "自动切换：" + row.Title + " 正被 " + OtherNames(others) + " 使用，已跳过。";
+                    return;
+                }
+
+                var confirmed = await _dialogs.ConfirmAsync("账号正被其它程序使用",
+                    row.Title + " 当前正被 " + OtherNames(others) + " 使用。\n\n切换后 " + name + " 和 " + OtherNames(others)
+                    + " 会共用同一个刷新令牌：其中一个刷新令牌后，另一个的登录会失效（refresh_token_reused），之后需要重新登录。\n\n仍要切换到 " + name + " 吗？");
+                if (!confirmed) { StatusText = "已取消切换。"; return; }
+            }
+
             var result = await Task.Run(() => _services.SwitchAsync(row.Row.CredentialId)).ConfigureAwait(true);
-            StatusText = result.Changed ? "已切换并回读确认：" + result.Label : result.Label + " 已是当前账号。";
-            _cliNote = result.CliNote;
-            if (_cliNote.Length > 0) { StatusText += " · " + _cliNote; }
+            StatusText = result.Changed ? "已切换 " + name + " 账号：" + result.Label : result.Label + " 已是 " + name + " 的当前账号。";
+            if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
             if (result.ReauthRequired)
             {
-                await _dialogs.ShowWarningAsync("需要重新登录", "该账号的访问令牌已过期：切号只把它写成 dsh 当前的 Codex 凭据，不会自动刷新登录。请先重新授权该账号。");
+                await _dialogs.ShowWarningAsync("需要重新登录", "该账号的访问令牌已过期：切号只把它写给 " + name + "，不会自动刷新登录。请先重新授权该账号。");
             }
         }
         catch (Exception ex)
@@ -415,8 +490,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             IsBusy = false;
         }
 
+        var status = StatusText;
         await ReadDshAsync();
+        if (!string.IsNullOrEmpty(status) && StatusText.StartsWith("已读取", StringComparison.Ordinal)) { StatusText = status; }
     }
+
+    private static string OtherNames(IEnumerable<SwitchTarget> targets) => string.Join("、", targets.Select(t => t.Display()));
 
     public async Task RefreshAsync(AccountRowViewModel row)
     {
@@ -938,8 +1017,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             return;
         }
 
+        // An account that another program (not the selected target) currently uses is never picked automatically:
+        // both programs would share one refresh token. Only a manual switch may ask the user about that.
+        IReadOnlySet<string> usedElsewhere;
+        try { usedElsewhere = await Task.Run(() => _services.GetIdsUsedByOtherTargetsAsync()).ConfigureAwait(true); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _services.Log.Warn("自动切换：无法确认其它程序在用哪些账号，已不切换：" + _services.Secrets.Redact(ex.Message));
+            return;
+        }
+
         var others = Accounts
-            .Where(a => a.IsCodex && !a.IsCurrent && _quotaCache.TryGetValue(a.Key, out var c) && c.Result.Usage is not null)
+            .Where(a => a.IsCodex && !a.IsCurrent && !usedElsewhere.Contains(a.Row.CredentialId) && _quotaCache.TryGetValue(a.Key, out var c) && c.Result.Usage is not null)
             .Select(a => ToCandidate(a, _quotaCache[a.Key].Result))
             .ToList();
 
@@ -957,7 +1046,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
         _lastAutoSwitch = DateTime.UtcNow;
         _services.Log.Info("自动切换：当前账号即将触及预留线（5h " + Fmt(cur.FiveHourRemaining) + "% / 周 " + Fmt(cur.WeeklyRemaining) + "%），切到 " + targetRow.Title + "。");
-        await SwitchAsync(targetRow);
+        await SwitchCoreAsync(targetRow, interactive: false);
     }
 
     /// <summary>
@@ -1029,8 +1118,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             DetectedProfiles = DshHome.ListProfiles(_services.Home.Root),
             AutoRefreshMinutes = AutoRefreshMinutes,
             AutoSwitchAccount = _services.Settings.AutoSwitchAccount,
-            SwitchCodexCliToo = _services.Settings.SwitchCodexCliToo,
             CodexHome = _services.Settings.CodexHome ?? string.Empty,
+            OpenCodeCliPath = _services.Settings.OpenCodeCliPath ?? string.Empty,
             WebDavUrl = _services.Settings.WebDavUrl ?? string.Empty,
             WebDavUsername = _services.Settings.WebDavUsername ?? string.Empty,
             WebDavPasswordStored = _services.HasWebDavPassword,
@@ -1050,9 +1139,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         UpdateDshStatus();
         if (result.AutoRefreshMinutes > 0) { AutoRefreshMinutes = result.AutoRefreshMinutes; }
         _services.Settings.AutoSwitchAccount = result.AutoSwitchAccount;
-        _services.Settings.SwitchCodexCliToo = result.SwitchCodexCliToo;
-        OnPropertyChanged(nameof(SwitchCodexToo));
         _services.Settings.CodexHome = string.IsNullOrWhiteSpace(result.CodexHome) ? null : result.CodexHome.Trim();
+        _services.Settings.OpenCodeCliPath = string.IsNullOrWhiteSpace(result.OpenCodeCliPath) ? null : result.OpenCodeCliPath.Trim();
+        _services.ApplyOpenCodeCliPath();
 
         _services.Settings.WebDavUrl = string.IsNullOrWhiteSpace(result.WebDavUrl) ? null : result.WebDavUrl.Trim();
         _services.Settings.WebDavUsername = string.IsNullOrWhiteSpace(result.WebDavUsername) ? null : result.WebDavUsername.Trim();

@@ -52,6 +52,22 @@ public partial class MainWindow : Window
         ZoomHost.LayoutTransform = fitted.Zoom < 1 ? new ScaleTransform(fitted.Zoom, fitted.Zoom) : null;
     }
 
+    /// <summary>
+    /// The three switch-target boxes are exclusive and one is always ticked. When a click un-ticks the ticked box (or ticks
+    /// another one) the view model decides; afterwards the boxes are set to what it says, so a refused un-tick shows the tick
+    /// again even though the bound value never changed.
+    /// </summary>
+    private void OnTargetBoxChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        => Avalonia.Threading.Dispatcher.UIThread.Post(SyncTargetBoxes);
+
+    private void SyncTargetBoxes()
+    {
+        if (DataContext is not MainWindowViewModel vm) { return; }
+        TargetDshBox.SetCurrentValue(CheckBox.IsCheckedProperty, vm.SwitchTargetDsh);
+        TargetCodexBox.SetCurrentValue(CheckBox.IsCheckedProperty, vm.SwitchTargetCodex);
+        TargetOpenCodeBox.SetCurrentValue(CheckBox.IsCheckedProperty, vm.SwitchTargetOpenCode);
+    }
+
     /// <summary>Set by the composition root so the window can persist its size on close.</summary>
     public AppServices? Services { get; set; }
 

@@ -28,8 +28,8 @@ public partial class SettingsDialog : Window
             : "检测到的档案：" + string.Join("、", input.DetectedProfiles);
         dialog.IntervalBox.Value = input.AutoRefreshMinutes;
         dialog.AutoSwitchBox.IsChecked = input.AutoSwitchAccount;
-        dialog.CliSwitchBox.IsChecked = input.SwitchCodexCliToo;
         dialog.CodexHomeBox.Text = input.CodexHome;
+        dialog.OpenCodeCliBox.Text = input.OpenCodeCliPath;
         dialog.WebDavUrlBox.Text = input.WebDavUrl;
         dialog.WebDavUserBox.Text = input.WebDavUsername;
         dialog.WebDavPassBox.Watermark = input.WebDavPasswordStored ? "应用密码（已保存，留空保持不变）" : "应用密码";
@@ -75,6 +75,19 @@ public partial class SettingsDialog : Window
         if (!string.IsNullOrWhiteSpace(path)) { CodexHomeBox.Text = path; }
     }
 
+    private async void OnBrowseOpenCode(object? sender, RoutedEventArgs e)
+    {
+        var storage = GetTopLevel(this)?.StorageProvider;
+        if (storage is null) { return; }
+        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择 OpenCode 命令行可执行文件（opencode 或 opencode-cli）",
+            AllowMultiple = false,
+        });
+        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+        if (!string.IsNullOrWhiteSpace(path)) { OpenCodeCliBox.Text = path; }
+    }
+
     private void OnSave(object? sender, RoutedEventArgs e) => CloseWith(SettingsAction.None);
 
     private void OnUpload(object? sender, RoutedEventArgs e) => CloseWith(SettingsAction.Upload);
@@ -89,8 +102,8 @@ public partial class SettingsDialog : Window
             DshProfile = ProfileBox.Text?.Trim() ?? string.Empty,
             AutoRefreshMinutes = (int)Math.Max(1, IntervalBox.Value ?? 5),
             AutoSwitchAccount = AutoSwitchBox.IsChecked == true,
-            SwitchCodexCliToo = CliSwitchBox.IsChecked == true,
             CodexHome = CodexHomeBox.Text?.Trim() ?? string.Empty,
+            OpenCodeCliPath = OpenCodeCliBox.Text?.Trim() ?? string.Empty,
             WebDavUrl = WebDavUrlBox.Text?.Trim() ?? string.Empty,
             WebDavUsername = WebDavUserBox.Text?.Trim() ?? string.Empty,
             WebDavPassword = string.IsNullOrEmpty(WebDavPassBox.Text) ? null : WebDavPassBox.Text,

@@ -61,18 +61,16 @@ public sealed class DshBackend : IAccountBackend
 
     public AccountVault Vault => _vault;
 
-    /// <summary>The Codex CLI auth file switched together with dsh's grant; null = never touched.</summary>
-    public CodexCliAuthStore? CodexCli { get; set; }
+    /// <summary>The program a switch writes to (read at every use); dsh unless the composition root says otherwise.</summary>
+    public Func<SwitchTarget> SelectedTarget { get; set; } = () => SwitchTarget.Dsh;
 
-    /// <summary>The <c>SwitchCodexCliToo</c> setting, read at every use.</summary>
-    public Func<bool> CodexCliEnabled { get; set; } = () => true;
+    /// <summary>
+    /// Called with the stored record of an account that was just saved while Codex or OpenCode is the switch target:
+    /// refreshes that program when it is signed in as the same account. Never a switch to another account.
+    /// </summary>
+    public Func<JsonObject, CancellationToken, Task>? TargetRefresher { get; set; }
 
-    /// <summary>Outcome of the Codex CLI step of the last activation.</summary>
-    public CodexCliSyncResult LastCodexCliSync { get; private set; } = CodexCliSyncResult.Off;
-
-    public string LastCodexCliNote => LastCodexCliSync.StatusNote;
-
-    private bool CliOn => CodexCli is not null && CodexCliEnabled();
+    public bool FirstAccountBecomesCurrent => SelectedTarget() == SwitchTarget.Dsh;
 
     /// <summary>Points the backend at another DSH home / profile (Settings).</summary>
     public void SetHome(DshHome home) => _home = home ?? throw new ArgumentNullException(nameof(home));
@@ -108,13 +106,10 @@ public sealed class DshBackend : IAccountBackend
                 }
             }
 
-            var (cliIndex, cliPending) = CliState(records, activeIndex);
             var array = new JsonArray();
             for (var i = 0; i < records.Count; i++)
             {
                 var credential = VaultCredentialMapper.ToCredential(records[i], i == activeIndex, i == activeIndex ? grant : null);
-                if (i == cliIndex) { credential["cliActive"] = true; }
-                if (i == activeIndex && cliPending) { credential["cliPending"] = true; }
                 array.Add(credential);
             }
 
@@ -133,16 +128,17 @@ public sealed class DshBackend : IAccountBackend
             return array;
         }, cancellationToken);
 
-    /// <summary>
-    /// Which vault account the Codex CLI is signed in as (-1 = none / not in the vault), and whether switching would
-    /// change the CLI file (so an account that is already dsh's current one can still be synced). Read only.
-    /// </summary>
-    private (int CliIndex, bool Pending) CliState(IReadOnlyList<JsonObject> records, int dshIndex)
+    /// <summary>The vault id of dsh's current Codex account (its grant), or null when there is none / it cannot be read. Read only.</summary>
+    public string? CurrentVaultId()
     {
-        if (!CliOn || CodexCli!.CheckUsable(forWrite: false) is not null) { return (-1, false); }
-        var current = CodexCli.ReadCurrent();
-        var index = current is { HasLogin: true } ? VaultCredentialMapper.FindActive(records, current.ToGrant()) : -1;
-        return (index, dshIndex >= 0 && index != dshIndex);
+        try
+        {
+            var grant = LoadCredentials(Home).GetGrantPayload(CodexGrantKey) as JsonObject;
+            var records = _vault.Load().ToList();
+            var index = VaultCredentialMapper.FindActive(records, grant);
+            return index >= 0 ? VaultCredentialMapper.IdOf(records[index]) : null;
+        }
+        catch (DshException) { return null; }
     }
 
     public Task<JsonArray> GetConfigEntriesAsync(CancellationToken cancellationToken = default)
@@ -253,15 +249,35 @@ public sealed class DshBackend : IAccountBackend
             var record = VaultCredentialMapper.ToRecord(id, label, value, null);
             _vault.Upsert(record);
 
-            if (activate || NoCurrentGrant())
+            if (SelectedTarget() == SwitchTarget.Dsh)
             {
-                try { ActivateCore(id, allowFirstAccount: true); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                if (activate || NoCurrentGrant())
                 {
-                    // The account is stored; only making it current failed.
-                    _log?.Warn("账号已保存，但未能设为 dsh 当前账号：" + _secrets.Redact(ex.Message));
-                    if (activate) { throw; }
+                    try { ActivateCore(id, allowFirstAccount: true); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // The account is stored; only making it current failed.
+                        _log?.Warn("账号已保存，但未能设为 dsh 当前账号：" + _secrets.Redact(ex.Message));
+                        if (activate) { throw; }
+                    }
                 }
+            }
+            else
+            {
+                // Codex / OpenCode is the switch target: nothing is switched here. dsh keeps pointing at the same
+                // account when this save replaces its current one, and the target program is refreshed when it is
+                // signed in as this very account.
+                if (activate && SameAccountAsDshGrant(record))
+                {
+                    try { ActivateCore(id, allowFirstAccount: true); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _log?.Warn("账号已保存，但未能更新 dsh 当前账号的令牌：" + _secrets.Redact(ex.Message));
+                        throw;
+                    }
+                }
+
+                RefreshTarget(record);
             }
 
             return Task.FromResult(id);
@@ -311,6 +327,27 @@ public sealed class DshBackend : IAccountBackend
         catch (DshStorageException) { return false; }
     }
 
+    private bool SameAccountAsDshGrant(JsonObject record)
+    {
+        try
+        {
+            var grant = LoadCredentials(Home).GetGrantPayload(CodexGrantKey) as JsonObject;
+            var accountId = VaultCredentialMapper.AccountIdOf(record);
+            return grant is not null && accountId.Length > 0 && JsonMerge.GetString(grant, "accountId") == accountId;
+        }
+        catch (DshException) { return false; }
+    }
+
+    private void RefreshTarget(JsonObject record)
+    {
+        if (TargetRefresher is null) { return; }
+        try { TargetRefresher(record, CancellationToken.None).GetAwaiter().GetResult(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.Warn("账号已保存，但未能更新" + SelectedTarget().Display() + "里的同一账号：" + _secrets.Redact(ex.Message));
+        }
+    }
+
     /// <summary>
     /// Makes a vault account dsh's current Codex account inside one credentials-document update: first any tokens
     /// dsh refreshed since are written back into the vault (only when newer), a foreign current grant is
@@ -321,8 +358,6 @@ public sealed class DshBackend : IAccountBackend
         if (string.IsNullOrWhiteSpace(id)) { throw new DshException("请选择要激活的账号。"); }
         var home = Home;
         JsonObject? expected = null;
-        LastCodexCliSync = CodexCliSyncResult.Off;
-        AbsorbCodexCliLogin();
 
         CredentialsDocument.Update(home.CredentialsPath, doc =>
         {
@@ -382,50 +417,37 @@ public sealed class DshBackend : IAccountBackend
             throw new DshException("激活未成功：回读校验失败。凭据文件可能已被其他程序修改，请在 dsh 中确认后重试。");
         }
 
-        WriteCodexCli(id);
         EnsureCodexRoute(home);
     }
 
     /// <summary>
-    /// Before anything is overwritten: the Codex CLI may have refreshed its tokens since the vault saw them (they are
-    /// written back, newest wins), or it may be signed in as an account the vault does not know (adopted, so it is
-    /// never lost). Failures only log: the switch itself goes on.
+    /// Before a switch: dsh's own grant may carry tokens dsh refreshed since the vault saw them (written back, newest
+    /// wins), or belong to an account the vault does not know (adopted, so it is never lost). Failures only log.
     /// </summary>
-    private void AbsorbCodexCliLogin()
+    public void AbsorbDshGrant()
     {
-        if (!CliOn) { return; }
         try
         {
-            var cli = CodexCli!.ReadCurrent();
-            if (cli is not { HasLogin: true }) { return; }
-            var grant = cli.ToGrant();
-            lock (_adoptGate)
-            {
-                var records = _vault.Load().ToList();
-                var index = VaultCredentialMapper.FindActive(records, grant);
-                if (index >= 0)
-                {
-                    if (!VaultCredentialMapper.GrantIsNewer(grant, records[index])) { return; }
-                    var refreshed = (JsonObject)records[index].DeepClone();
-                    var changed = VaultCredentialMapper.ApplyGrantTokens(refreshed, grant);
-                    if (cli.IdToken.Length > 0 && refreshed["tokens"] is JsonObject tokens
-                        && JsonMerge.GetString(tokens, "id_token") != cli.IdToken)
-                    {
-                        tokens["id_token"] = cli.IdToken;
-                        changed = true;
-                    }
+            if (LoadCredentials(Home).GetGrantPayload(CodexGrantKey) is JsonObject grant) { AbsorbLogin(grant, null, "dsh", adoptUnknown: true); }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.Warn("读取 dsh 当前登录失败，已跳过写回：" + _secrets.Redact(ex.Message));
+        }
+    }
 
-                    if (changed)
-                    {
-                        _vault.Upsert(refreshed);
-                        _log?.Info("已把 Codex CLI 刷新后的令牌写回账号库：" + VaultCredentialMapper.IdOf(refreshed));
-                    }
-                }
-                else if (AdoptForeignGrant(grant, cli.IdToken) is { } adopted)
-                {
-                    _log?.Info("Codex CLI 当前的登录不在账号库中，已先保存到账号库：" + VaultCredentialMapper.IdOf(adopted));
-                }
-            }
+    /// <summary>
+    /// Before a switch: the Codex CLI may have refreshed its tokens since the vault saw them (written back, newest
+    /// wins), or it may be signed in as an account the vault does not know (adopted, so it is never lost).
+    /// Failures only log: the switch itself goes on.
+    /// </summary>
+    public void AbsorbCodexCliLogin(CodexCliAuthStore codex)
+    {
+        try
+        {
+            var cli = codex.ReadCurrent();
+            if (cli is not { HasLogin: true }) { return; }
+            AbsorbLogin(cli.ToGrant(), cli.IdToken, "Codex CLI", adoptUnknown: true);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -433,30 +455,42 @@ public sealed class DshBackend : IAccountBackend
         }
     }
 
-    /// <summary>After dsh's grant was written: the same account into the Codex CLI's auth.json (never fails the switch).</summary>
-    private void WriteCodexCli(string id)
+    /// <summary>
+    /// Writes a login seen in another program back into the vault when it is the same account with a later token
+    /// expiry (newest wins). With <paramref name="adoptUnknown"/> a login no vault account owns is stored as a new
+    /// account. Returns whether the vault changed.
+    /// </summary>
+    public bool AbsorbLogin(JsonObject grant, string? idToken, string source, bool adoptUnknown)
     {
-        if (!CliOn) { return; }
-        CodexCliSyncResult result;
-        try
+        lock (_adoptGate)
         {
-            var target = _vault.FindById(id);
-            result = target is null
-                ? new CodexCliSyncResult(CodexCliSyncKind.Failed, "账号库里没有该账号")
-                : CodexCli!.Write(target, DateTimeOffset.UtcNow);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            result = new CodexCliSyncResult(CodexCliSyncKind.Failed, _secrets.Redact(ex.Message));
-        }
+            var records = _vault.Load().ToList();
+            var index = VaultCredentialMapper.FindActiveVerified(records, grant);
+            if (index >= 0)
+            {
+                if (!VaultCredentialMapper.GrantIsNewer(grant, records[index])) { return false; }
+                var refreshed = (JsonObject)records[index].DeepClone();
+                var changed = VaultCredentialMapper.ApplyGrantTokens(refreshed, grant);
+                if (!string.IsNullOrEmpty(idToken) && refreshed["tokens"] is JsonObject tokens
+                    && JsonMerge.GetString(tokens, "id_token") != idToken)
+                {
+                    tokens["id_token"] = idToken;
+                    changed = true;
+                }
 
-        LastCodexCliSync = result;
-        switch (result.Kind)
-        {
-            case CodexCliSyncKind.Written: _log?.Info("Codex CLI：已把该账号写入 " + CodexCli!.AuthPath + "（已先做加密备份）"); break;
-            case CodexCliSyncKind.Unchanged: _log?.Info("Codex CLI 已是该账号，无需改动"); break;
-            case CodexCliSyncKind.Silent: _log?.Info("Codex CLI 未同步（" + result.Message + "），已跳过"); break;
-            default: _log?.Warn("Codex CLI 未同步：" + result.Message); break;
+                if (!changed) { return false; }
+                _vault.Upsert(refreshed);
+                _log?.Info("已把 " + source + " 刷新后的令牌写回账号库：" + VaultCredentialMapper.IdOf(refreshed));
+                return true;
+            }
+
+            if (adoptUnknown && AdoptForeignGrant(grant, idToken) is { } adopted)
+            {
+                _log?.Info(source + " 当前的登录不在账号库中，已先保存到账号库：" + VaultCredentialMapper.IdOf(adopted));
+                return true;
+            }
+
+            return false;
         }
     }
 

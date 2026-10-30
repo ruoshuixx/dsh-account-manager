@@ -5,7 +5,7 @@
         xmlns:controls="using:AccountManager.App.Controls"
         x:Class="AccountManager.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="DSH 账号管理"
+        Title="AI 账号管理"
         Icon="avares://DshAccountManager/Assets/app.ico"
         Width="980" Height="620"
         MinWidth="860" MinHeight="480"
@@ -92,9 +92,6 @@
               <Border Classes="chip success" IsVisible="{Binding IsCurrent}" Margin="0,0,6,0">
                 <TextBlock Text="当前" />
               </Border>
-              <Border Classes="chip accent" IsVisible="{Binding IsCliCurrent}" Margin="0,0,6,0" ToolTip.Tip="Codex CLI 正在使用这个账号（dsh 当前用的是另一个）">
-                <TextBlock Text="CLI" />
-              </Border>
             </StackPanel>
             <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" FontSize="13.5" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
           </Grid>
@@ -133,7 +130,7 @@
 
         <!-- actions -->
         <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Classes="mini" Command="{Binding SwitchCommand}" IsVisible="{Binding IsCodex}" ToolTip.Tip="激活该账号为当前 DSH 凭据">
+          <Button Classes="mini" Command="{Binding SwitchCommand}" IsVisible="{Binding IsCodex}" ToolTip.Tip="把该账号切给当前选中的目标（dsh / Codex / OpenCode）">
             <StackPanel Orientation="Horizontal" Spacing="4">
               <PathIcon Data="{StaticResource IcoSwitch}" />
               <TextBlock Text="切号" VerticalAlignment="Center" />
@@ -187,9 +184,15 @@
               <TextBlock Text="删除" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
-          <CheckBox Content="同时切 Codex" IsChecked="{Binding SwitchCodexToo, Mode=TwoWay}" VerticalAlignment="Center" Margin="6,0,0,0"
-                    ToolTip.Tip="切号时一并写入 Codex 的登录文件 auth.json（Codex CLI 与桌面版共用）。桌面版已打开时需重启才生效。" />
+          <!-- Switch target: exactly one is ticked (the view model keeps it so); the list's "当前" follows it. -->
+          <CheckBox x:Name="TargetDshBox" Content="dsh" IsChecked="{Binding SwitchTargetDsh, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center" Margin="6,0,0,0"
+                    ToolTip.Tip="切号写入 dsh 当前的 Codex 凭据（只写 dsh，不动 Codex 和 OpenCode）。" />
+          <CheckBox x:Name="TargetCodexBox" Content="Codex" IsChecked="{Binding SwitchTargetCodex, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
+                    ToolTip.Tip="切号写入 ~/.codex/auth.json（Codex CLI 与桌面版共用）。桌面版已打开时需重启才生效。" />
+          <CheckBox x:Name="TargetOpenCodeBox" Content="OpenCode" IsChecked="{Binding SwitchTargetOpenCode, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
+                    ToolTip.Tip="切号把该账号设为 OpenCode 里 openai 的当前 OAuth 凭据（需要已安装 OpenCode）。" />
         </StackPanel>
+        <TextBlock Grid.Column="1" Classes="subtitle" Text="{Binding TargetHint}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="切换目标不是 dsh 时，下面的 API 供应商仍是 dsh 的配置；后续版本会按目标分别切换。" />
         <TextBlock Grid.Column="1" Classes="error" Text="{Binding ProviderWarning}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProviderWarning}" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Button Classes="toolbar" Command="{Binding ReadDshCommand}">

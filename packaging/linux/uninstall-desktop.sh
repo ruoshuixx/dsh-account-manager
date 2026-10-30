@@ -81,4 +81,4 @@ done
 [[ ! -e "$desktop_path" && ! -L "$desktop_path" ]] || rm -- "$desktop_path"
 [[ ! -e "$icon_path" && ! -L "$icon_path" ]] || rm -- "$icon_path"
 rm -- "$marker_path"
-printf 'Removed only the unchanged user desktop entry and icon owned by DSH Account Manager.\n'
+printf 'Removed only the unchanged user desktop entry and icon owned by AI Account Manager.\n'
