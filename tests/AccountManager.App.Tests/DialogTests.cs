@@ -475,7 +475,7 @@ public class DialogTests
             var name = dialog.FindControl<ComboBox>("NameBox")!;
             var url = dialog.FindControl<TextBox>("BaseUrlBox")!;
             var models = dialog.FindControl<TextBox>("ModelsBox")!;
-            Assert.Equal(new[] { "OpenAI", "火山 Coding Plan", "火山 Agent Plan" }, name.Items.OfType<string>());
+            Assert.Equal(new[] { "OpenAI", "DeepSeek", "火山 Coding Plan", "火山 Agent Plan" }, name.Items.OfType<string>());
             Assert.Equal("Mine", name.Text);
             Assert.Equal("https://gw.example.test/v1", url.Text);
             Assert.Null(name.SelectedItem); // nothing is applied until a template is picked

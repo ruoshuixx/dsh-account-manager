@@ -13,9 +13,9 @@ public class ApiProviderTemplateTests
     private static ApiProviderTemplate Template(string name) => ApiProviderTemplates.Find(name)!;
 
     [Fact]
-    public void TheThreeTemplatesHaveTheAgreedValues()
+    public void TheTemplatesHaveTheAgreedValues()
     {
-        Assert.Equal(new[] { "OpenAI", "火山 Coding Plan", "火山 Agent Plan" }, ApiProviderTemplates.Names);
+        Assert.Equal(new[] { "OpenAI", "DeepSeek", "火山 Coding Plan", "火山 Agent Plan" }, ApiProviderTemplates.Names);
         var openai = Template("OpenAI");
         Assert.Equal(OpenAi, openai.BaseUrl);
         Assert.True(openai.UseResponses);
@@ -25,7 +25,9 @@ public class ApiProviderTemplateTests
         Assert.Equal(new[] { "ark-code-latest", "deepseek-v4.1-flash", "glm-5.3-flash", "kimi-k2.7-code", "minimax-m3", "doubao-seed-2.1-turbo", "glm-5.3", "doubao-seed-evolving", "deepseek-v4-pro" },
             Template("火山 Coding Plan").Models);
         Assert.Equal(Template("火山 Coding Plan").Models, Template("火山 Agent Plan").Models);
-        Assert.All(ApiProviderTemplates.All, t => Assert.True(t.UseResponses));
+        Assert.Equal("https://api.deepseek.com", Template("DeepSeek").BaseUrl);
+        Assert.Equal(new[] { "deepseek-flash", "deepseek-v4-pro" }, Template("DeepSeek").Models);
+        Assert.All(ApiProviderTemplates.All.Where(t => t.Name != "DeepSeek"), t => Assert.True(t.UseResponses));
     }
 
     [Fact]
@@ -141,6 +143,27 @@ public class ApiProviderTemplateTests
         Assert.False(ModelVariantBuilder.NewModelEntry("gpt-6.1-sol", true, "https://gw.example.test/v1").ContainsKey(ProviderViewMapper.ExtraKey));
         Assert.False(ModelVariantBuilder.NewModelEntry("o9-mini", true, OpenAi).ContainsKey(ProviderViewMapper.ExtraKey));
         Assert.False(ModelVariantBuilder.NewModelEntry("gpt-6.1-sol", false, OpenAi).ContainsKey(ProviderViewMapper.ExtraKey));
+    }
+
+    [Fact]
+    public void DeepSeekModelsOnTheOfficialEndpointGetTheirLimitsAndEffortsWithChatCompletions()
+    {
+        const string deepSeek = "https://api.deepseek.com";
+        var flash = ModelVariantBuilder.NewModelEntry("deepseek-flash", false, deepSeek);
+        Assert.Equal(new[] { "low", "high", "max" }, flash["variants"]!.AsArray().Select(v => v!["id"]!.GetValue<string>()));
+        var extras = flash[ProviderViewMapper.ExtraKey]!.AsObject();
+        Assert.Equal(1000000, extras["contextWindow"]!.GetValue<int>());
+        Assert.Equal(384000, extras["maxTokens"]!.GetValue<int>());
+        Assert.Equal(new[] { "text", "image" }, extras["input"]!.AsArray().Select(n => n!.GetValue<string>()));
+
+        var pro = ModelVariantBuilder.NewModelEntry("deepseek-v4-pro", true, deepSeek + "/v1");
+        Assert.Equal(new[] { "text" }, pro[ProviderViewMapper.ExtraKey]!["input"]!.AsArray().Select(n => n!.GetValue<string>()));
+
+        Assert.False(ModelVariantBuilder.NewModelEntry("deepseek-chat-x", false, deepSeek).ContainsKey("variants"));
+        var ark = ModelVariantBuilder.NewModelEntry("deepseek-v4-pro", true, "https://ark.cn-beijing.volces.com/api/coding/v3");
+        Assert.False(ark.ContainsKey(ProviderViewMapper.ExtraKey));
+        Assert.Contains("low / high / max", ApiProviderTemplates.AutoConfigHint(deepSeek, false));
+        Assert.False(ApiProviderTemplates.Find("DeepSeek")!.UseResponses);
     }
 
     [Fact]

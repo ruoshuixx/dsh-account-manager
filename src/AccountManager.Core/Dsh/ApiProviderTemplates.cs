@@ -22,6 +22,7 @@ public static class ApiProviderTemplates
     {
         new ApiProviderTemplate("OpenAI", "https://api.openai.com/v1", true,
             new[] { "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna" }),
+        new ApiProviderTemplate("DeepSeek", "https://api.deepseek.com", false, new[] { "deepseek-flash", "deepseek-v4-pro" }),
         new ApiProviderTemplate("火山 Coding Plan", "https://ark.cn-beijing.volces.com/api/coding/v3", true, ArkModels),
         new ApiProviderTemplate("火山 Agent Plan", "https://ark.cn-beijing.volces.com/api/plan/v3", true, ArkModels),
     };
@@ -48,6 +49,7 @@ public static class ApiProviderTemplates
     /// <summary>What dsh will be configured with automatically for this address and protocol, as a one-line hint; empty when nothing is.</summary>
     public static string AutoConfigHint(string? baseUrl, bool useResponses)
     {
+        if (ModelVariantBuilder.IsDeepSeekOfficialEndpoint(baseUrl)) { return "将自动配置思考程度 " + string.Join(" / ", ModelVariantBuilder.DeepSeekEfforts) + "，上下文 100 万 / 输出 38.4 万（deepseek-flash 支持图片，deepseek-v4-pro 仅文字）"; }
         if (!useResponses) { return string.Empty; }
         if (ModelVariantBuilder.IsOpenAiOfficialEndpoint(baseUrl)) { return "将自动配置思考程度 " + string.Join(" / ", ModelVariantBuilder.OpenAiEfforts) + "，上下文 92.2 万 / 输出 12.8 万 / 支持图片（GPT-6 系列模型；超过 27.2 万输入按长上下文价计费）"; }
         if (ModelVariantBuilder.IsArkPlanEndpoint(baseUrl)) { return "将按方舟文档为支持的模型配置思考程度"; }

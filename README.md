@@ -29,6 +29,7 @@
   - **模板**：添加 / 编辑窗口的“供应商名称”是可编辑下拉框，内置 OpenAI、火山 Coding Plan、火山 Agent Plan 三个模板；选中模板时只填空着的 URL 和模型（已填的不动），协议只在 URL 被填入时跟着模板走，API Key 不动；仍可输入自定义名称。
   - **思考程度**：Responses 协议下，火山方舟 Coding / Agent Plan 按方舟文档给支持的模型配置档位；OpenAI 官方 API（`https://api.openai.com/v1`）的 GPT-6 系列（`gpt-6`、`gpt-6.1-sol` 等）配置 low / medium / high / xhigh / max。只补没有档位的模型，已有的不覆盖。
   - **上下文与输出上限**：OpenAI 官方 API 的 GPT-6 系列写入官方上限：`contextWindow` 922000（官方最大输入；总窗口 1,050,000）、`maxTokens` 128000、`input` 文字和图片。dsh 对没有内置资料的供应商默认只有 262144 / 32768 / 仅文字。只补缺的项，你设过的值不改。单次输入超过 272K token 时 OpenAI 按长上下文价计费（输入 2 倍、输出 1.5 倍）。
+  - **DeepSeek 官方 API**（模板“DeepSeek”，`https://api.deepseek.com`，Chat Completions）：`deepseek-flash`（V4.1-Flash，支持图片）和 `deepseek-v4-pro`（仅文字）写入思考程度 low / high / max、`contextWindow` 1000000、`maxTokens` 384000；只补缺的项。
   - **OpenAI Fast**：官方 OpenAI 地址 + Responses 协议时，窗口里出现“附带 Fast 模型（优先处理，按更高单价计费）”勾选（新建默认勾选）。勾选后为每个 GPT-6 系列模型写一个 `<id>-fast`（名字“… (Fast)”，档位同基础模型，不在模型框里显示）；它们由下面的 Fast 组件（0.2.0）以基础模型 + `service_tier: "priority"` 发出。保存时自动安装 / 更新组件，首次安装或更新后需要完全退出 DSH 再打开；装不上组件时不写 Fast 模型，其余照常保存并提示。
 - **查询额度**：只读 `GET https://chatgpt.com/backend-api/wham/usage`，显示 5 小时与本周期剩余；可设置自动刷新，也可开启“额度快用完时自动切号”。
 - **导入 / 导出 Cockpit 格式 JSON**：解析 Cockpit 导出的账号数组（Codex 账号与 API Key 账号），导入前先做加密备份，导入不会切换当前账号；

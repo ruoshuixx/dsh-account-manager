@@ -34,7 +34,16 @@ public static class ModelVariantBuilder
     public static bool TryAddMissingVariants(JsonObject entry, string modelId, bool useResponses, string? baseUrl)
     {
         var limitsAdded = useResponses && TryAddMissingOpenAiLimits(entry, modelId, baseUrl);
-        if (!useResponses || entry.ContainsKey("variants")) { return limitsAdded; }
+        limitsAdded |= TryAddMissingDeepSeekLimits(entry, modelId, baseUrl);
+        if (entry.ContainsKey("variants")) { return limitsAdded; }
+        if (IsDeepSeekOfficialEndpoint(baseUrl))
+        {
+            if (DeepSeekModelOf(modelId) is null) { return limitsAdded; }
+            entry["variants"] = BuildEffortVariants(DeepSeekEfforts);
+            return true;
+        }
+
+        if (!useResponses) { return limitsAdded; }
         if (IsArkPlanEndpoint(baseUrl))
         {
             if (!ModelReasoningCatalog.TryGetEffortValues(modelId, out var effortValues)) { return false; }
@@ -68,19 +77,7 @@ public static class ModelVariantBuilder
     public static bool TryAddMissingOpenAiLimits(JsonObject entry, string modelId, string? baseUrl)
     {
         if (!IsOpenAiOfficialEndpoint(baseUrl) || !IsGpt6Family(modelId)) { return false; }
-        var extras = entry[ProviderViewMapper.ExtraKey] as JsonObject;
-        if (extras is null)
-        {
-            if (entry.ContainsKey(ProviderViewMapper.ExtraKey)) { return false; }
-            extras = new JsonObject();
-            entry[ProviderViewMapper.ExtraKey] = extras;
-        }
-
-        var changed = false;
-        if (!extras.ContainsKey("contextWindow")) { extras["contextWindow"] = OpenAiContextWindow; changed = true; }
-        if (!extras.ContainsKey("maxTokens")) { extras["maxTokens"] = OpenAiMaxTokens; changed = true; }
-        if (!extras.ContainsKey("input")) { extras["input"] = new JsonArray("text", "image"); changed = true; }
-        return changed;
+        return FillLimits(entry, OpenAiContextWindow, OpenAiMaxTokens, image: true);
     }
 
     /// <summary>The official OpenAI API: https, host <c>api.openai.com</c>, default port, path <c>/v1</c>, no userinfo, query or fragment.</summary>
@@ -94,6 +91,70 @@ public static class ModelVariantBuilder
             && string.IsNullOrEmpty(uri.Fragment)
             && string.Equals(uri.Host, "api.openai.com", StringComparison.OrdinalIgnoreCase)
             && string.Equals(uri.AbsolutePath.TrimEnd('/'), "/v1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// DeepSeek's official API (docs read 2026-10-30): both models have a 1M context and up to 384K output; <c>deepseek-flash</c>
+    /// (DeepSeek-V4.1-Flash; the retired <c>deepseek-v4-flash</c> is served by it) takes images, <c>deepseek-v4-pro</c> text only. The API
+    /// accepts the efforts low / high / max (default high). These are the values dsh's own DeepSeek catalog uses, written so a provider dsh
+    /// has no catalog for does not fall back to 262144 / 32768 / text only.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DeepSeekEfforts = new[] { "low", "high", "max" };
+
+    public const int DeepSeekContextWindow = 1000000;
+
+    public const int DeepSeekMaxTokens = 384000;
+
+    private static readonly (string Id, bool Image)[] DeepSeekModels =
+    {
+        ("deepseek-flash", true), ("deepseek-v4-flash", true), ("deepseek-v4-pro", false),
+    };
+
+    private static (string Id, bool Image)? DeepSeekModelOf(string? modelId)
+    {
+        foreach (var model in DeepSeekModels)
+        {
+            if (string.Equals(model.Id, modelId?.Trim(), StringComparison.OrdinalIgnoreCase)) { return model; }
+        }
+
+        return null;
+    }
+
+    /// <summary>The official DeepSeek API: https, host <c>api.deepseek.com</c>, default port, path empty or <c>/v1</c>, no userinfo, query or fragment.</summary>
+    public static bool IsDeepSeekOfficialEndpoint(string? baseUrl)
+    {
+        return Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps
+            && uri.IsDefaultPort
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment)
+            && string.Equals(uri.Host, "api.deepseek.com", StringComparison.OrdinalIgnoreCase)
+            && (uri.AbsolutePath.TrimEnd('/').Length == 0 || string.Equals(uri.AbsolutePath.TrimEnd('/'), "/v1", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Fills the documented limits of a DeepSeek model on its official endpoint where the entry does not set them (any protocol).</summary>
+    public static bool TryAddMissingDeepSeekLimits(JsonObject entry, string modelId, string? baseUrl)
+    {
+        if (!IsDeepSeekOfficialEndpoint(baseUrl) || DeepSeekModelOf(modelId) is not { } model) { return false; }
+        return FillLimits(entry, DeepSeekContextWindow, DeepSeekMaxTokens, model.Image);
+    }
+
+    private static bool FillLimits(JsonObject entry, int contextWindow, int maxTokens, bool image)
+    {
+        var extras = entry[ProviderViewMapper.ExtraKey] as JsonObject;
+        if (extras is null)
+        {
+            if (entry.ContainsKey(ProviderViewMapper.ExtraKey)) { return false; }
+            extras = new JsonObject();
+            entry[ProviderViewMapper.ExtraKey] = extras;
+        }
+
+        var changed = false;
+        if (!extras.ContainsKey("contextWindow")) { extras["contextWindow"] = contextWindow; changed = true; }
+        if (!extras.ContainsKey("maxTokens")) { extras["maxTokens"] = maxTokens; changed = true; }
+        if (!extras.ContainsKey("input")) { extras["input"] = image ? new JsonArray("text", "image") : new JsonArray("text"); changed = true; }
+        return changed;
     }
 
     /// <summary>GPT-6 family ids: <c>gpt-6</c> followed by the end or <c>-</c> / <c>.</c> (gpt-6-astra, gpt-6.1-sol, gpt-6.2-x); case-insensitive.</summary>
