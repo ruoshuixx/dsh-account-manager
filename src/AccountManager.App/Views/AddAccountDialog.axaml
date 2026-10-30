@@ -46,12 +46,14 @@
         <ScrollViewer>
           <StackPanel Spacing="5" Margin="2,10,2,4">
             <TextBlock Text="供应商名称" FontWeight="SemiBold" />
-            <TextBox Text="{Binding DisplayName, Mode=TwoWay}" MaxLength="120" Watermark="例如：火山 Coding Plan" />
+            <ComboBox IsEditable="True" HorizontalAlignment="Stretch" ItemsSource="{Binding TemplateNames}" SelectedItem="{Binding SelectedTemplate, Mode=TwoWay}"
+                      Text="{Binding DisplayName, Mode=TwoWay}" PlaceholderText="选择模板，或直接输入名称" />
             <TextBlock Text="URL（baseURL，必须 HTTPS）" FontWeight="SemiBold" />
             <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="https://example.com/v1" />
             <TextBlock Text="模型 list（每行一个或用逗号分隔）" FontWeight="SemiBold" />
             <TextBox Text="{Binding ModelsText, Mode=TwoWay}" AcceptsReturn="True" Height="76" TextWrapping="NoWrap"
                      Watermark="gpt-4o&#x0a;gpt-4o-mini" />
+            <TextBlock Text="{Binding AutoConfigHint}" Classes="subtitle" TextWrapping="Wrap" IsVisible="{Binding AutoConfigHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
             <TextBlock Text="API Key" FontWeight="SemiBold" />
             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" PasswordChar="*" Watermark="填写供应商提供的密钥" />
             <TextBlock Text="API 协议" FontWeight="SemiBold" Margin="0,2,0,0" />
@@ -60,6 +62,7 @@
               <RadioButton GroupName="ApiProtocol" Content="Responses" IsChecked="{Binding UseResponses, Mode=TwoWay}" />
             </StackPanel>
             <TextBlock Text="Chat Completions 调用 /chat/completions，Responses 调用 /responses；URL 填基础地址，不要追加接口路径。" Classes="subtitle" TextWrapping="Wrap" />
+            <CheckBox Content="附带 Fast 模型（优先处理，按更高单价计费）" IsChecked="{Binding UseFast, Mode=TwoWay}" IsVisible="{Binding ShowFastOption}" />
           </StackPanel>
         </ScrollViewer>
       </TabItem>

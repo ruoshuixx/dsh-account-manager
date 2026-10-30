@@ -135,6 +135,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
     private void PersistSettings() => new SettingsStore().Save(_services.Settings);
 
+    /// <summary>Toolbar tick: also write the activated account to Codex's shared auth.json (CLI and desktop app).</summary>
+    public bool SwitchCodexToo
+    {
+        get => _services.Settings.SwitchCodexCliToo;
+        set
+        {
+            if (_services.Settings.SwitchCodexCliToo == value) { return; }
+            _services.Settings.SwitchCodexCliToo = value;
+            PersistSettings();
+            OnPropertyChanged();
+        }
+    }
+
     private void OnLog(Core.Logging.LogEntry entry)
     {
         var line = entry.Time.ToString("HH:mm:ss") + "  " + entry.Message;
@@ -600,15 +613,20 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     public async Task ConfigureAsync(AccountRowViewModel row)
     {
         if (IsBusy || !row.IsApi) { return; }
+        // The dialog is filled from the stored address, not from the masked display text (which can read "[REDACTED]").
+        var definition = row.Row.Definition;
+        var twins = definition?.FastTwinIds ?? new List<string>();
         var input = new ApiConfigInput
         {
             ProviderId = row.Row.Provider,
             Title = row.Title,
             DisplayName = row.Row.ProviderName,
-            BaseUrl = row.Row.BaseUrl,
-            Models = row.Row.ModelIds.Count > 0 ? row.Row.ModelIds : row.Row.Models,
-            UseResponses = OpenAiApiProtocol.UsesResponses(row.Row.Definition?.Package),
+            BaseUrl = string.IsNullOrEmpty(definition?.EditableBaseUrl) ? row.Row.BaseUrl : definition.EditableBaseUrl,
+            Models = (row.Row.ModelIds.Count > 0 ? row.Row.ModelIds : row.Row.Models).Where(m => !twins.Contains(m, StringComparer.Ordinal)).ToList(),
+            UseResponses = OpenAiApiProtocol.UsesResponses(definition?.Package),
             HasCredential = !string.IsNullOrWhiteSpace(row.Row.CredentialId),
+            HasFast = twins.Count > 0,
+            FastTwinIds = twins,
         };
 
         IsBusy = true;
@@ -618,7 +636,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             var result = await _dialogs.ShowApiConfigAsync(input);
             if (result is null) { return; }
             ReferenceResolution? resolution = null;
-            var removedModels = input.Models.Where(m => !result.Models.Contains(m, StringComparer.Ordinal)).ToList();
+            // The hidden Fast twins go with a switched-off tick (or an address / protocol that no longer qualifies).
+            var keptTwins = result.Fast && ApiFastTwins.Qualifies(result.BaseUrl, result.UseResponses) ? input.FastTwinIds : Array.Empty<string>();
+            var removedModels = input.Models.Concat(input.FastTwinIds)
+                .Where(m => !result.Models.Contains(m, StringComparer.Ordinal) && !keptTwins.Contains(m, StringComparer.Ordinal)).ToList();
             if (removedModels.Count > 0)
             {
                 var guard = await GuardReferencesAsync(row.Row.Provider, row.Title, removedModels).ConfigureAwait(true);
@@ -627,9 +648,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             }
 
             StatusText = "正在保存供应商配置 …";
-            var save = await Task.Run(() => _services.SaveApiAsync(row.Row, result.DisplayName, result.BaseUrl, result.Models, result.NewKey, result.UseResponses, resolution)).ConfigureAwait(true);
+            var save = await Task.Run(() => _services.SaveApiAsync(row.Row, result.DisplayName, result.BaseUrl, result.Models, result.NewKey, result.UseResponses, resolution, result.Fast)).ConfigureAwait(true);
             StatusText = save.Updated && save.Complete ? "已保存供应商配置。" : "保存结果需要检查。";
             if (!string.IsNullOrWhiteSpace(save.Warning)) { StatusText += " " + save.Warning; }
+            if (!string.IsNullOrWhiteSpace(save.FastNote)) { StatusText += " " + save.FastNote; }
             outcome = StatusText;
             if (!save.Updated || !save.Complete) { await _dialogs.ShowWarningAsync("保存需要检查", string.IsNullOrWhiteSpace(save.Warning) ? "未做任何修改。" : save.Warning); }
             else if (save.RuntimeVerified == false) { await _dialogs.ShowWarningAsync("已保存，未能确认 dsh 已生效", save.Warning); }
@@ -665,6 +687,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         await ReadDshAsync();
         StatusText = result.Complete ? "已保存：" + result.Label + "。" : "添加结果需要检查。";
         if (!string.IsNullOrWhiteSpace(result.Warning)) { StatusText += " " + result.Warning; }
+        if (!string.IsNullOrWhiteSpace(result.FastNote)) { StatusText += " " + result.FastNote; }
         if (!result.Complete) { await _dialogs.ShowWarningAsync("添加结果需要检查", result.Warning); }
         else if (result.RuntimeVerified == false) { await _dialogs.ShowWarningAsync("已保存，未能确认 dsh 已生效", result.Warning); }
     }
@@ -1028,6 +1051,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         if (result.AutoRefreshMinutes > 0) { AutoRefreshMinutes = result.AutoRefreshMinutes; }
         _services.Settings.AutoSwitchAccount = result.AutoSwitchAccount;
         _services.Settings.SwitchCodexCliToo = result.SwitchCodexCliToo;
+        OnPropertyChanged(nameof(SwitchCodexToo));
         _services.Settings.CodexHome = string.IsNullOrWhiteSpace(result.CodexHome) ? null : result.CodexHome.Trim();
 
         _services.Settings.WebDavUrl = string.IsNullOrWhiteSpace(result.WebDavUrl) ? null : result.WebDavUrl.Trim();

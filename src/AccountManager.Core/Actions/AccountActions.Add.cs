@@ -36,14 +36,19 @@ public sealed partial class AccountActions
     /// <summary>Add a unique provider and key; never overwrite an existing provider.</summary>
     public async Task<AccountAddResult> CreateManagedApiProviderAsync(string providerId, string displayName,
         string baseUrl, IReadOnlyList<string> modelIds, string key, bool useResponses = false, CancellationToken ct = default)
+        => await CreateManagedApiProviderAsync(providerId, displayName, baseUrl, modelIds, key, useResponses, false, ct).ConfigureAwait(false);
+
+    /// <summary><paramref name="fast"/>: also write the Fast twins (<see cref="ApiFastTwins"/>) when the provider is the official OpenAI Responses endpoint.</summary>
+    public async Task<AccountAddResult> CreateManagedApiProviderAsync(string providerId, string displayName,
+        string baseUrl, IReadOnlyList<string> modelIds, string key, bool useResponses, bool fast, CancellationToken ct = default)
     {
         await _additionGate.WaitAsync(ct).ConfigureAwait(false);
-        try { return await CreateApiProviderCoreAsync(providerId, displayName, baseUrl, modelIds, key, useResponses, ct).ConfigureAwait(false); }
+        try { return await CreateApiProviderCoreAsync(providerId, displayName, baseUrl, modelIds, key, useResponses, fast, ct).ConfigureAwait(false); }
         finally { _additionGate.Release(); }
     }
 
     private async Task<AccountAddResult> CreateApiProviderCoreAsync(string providerId, string displayName,
-        string baseUrl, IReadOnlyList<string> modelIds, string key, bool useResponses, CancellationToken ct)
+        string baseUrl, IReadOnlyList<string> modelIds, string key, bool useResponses, bool fast, CancellationToken ct)
     {
         _secrets.RegisterValue(key);
         var name = ApiProviderValidation.Name(displayName);
@@ -71,6 +76,16 @@ public sealed partial class AccountActions
 
         var catalog = new JsonObject();
         foreach (var model in models) { catalog[model] = ModelVariantBuilder.NewModelEntry(model, useResponses, url); }
+        var withTwins = ApiFastTwins.Apply(catalog, null, url, useResponses, fast ? FastTwinMode.Create : FastTwinMode.Remove);
+        var fastNote = string.Empty;
+        if (ApiFastTwins.FindTwins(withTwins, url, useResponses).Count > 0)
+        {
+            var ensured = EnsureFastComponent(credentials);
+            fastNote = ensured.Note;
+            if (ensured.Usable) { catalog = withTwins; }
+        }
+
+        var savedModels = catalog.Select(kv => kv.Key).ToList();
         var view = new JsonObject
         {
             ["name"] = name,
@@ -84,7 +99,7 @@ public sealed partial class AccountActions
         {
             // Once the write starts, finish verification even when the dialog is cancelled.
             await _api.WriteApiProviderAsync(providerId, view, apiKey, CancellationToken.None).ConfigureAwait(false);
-            await AssertDefinitionSavedAsync(providerId, url, models, OpenAiApiProtocol.PackageFor(useResponses), backup, CancellationToken.None).ConfigureAwait(false);
+            await AssertDefinitionSavedAsync(providerId, url, savedModels, OpenAiApiProtocol.PackageFor(useResponses), backup, CancellationToken.None).ConfigureAwait(false);
             await AssertKeyStoredAsync(providerId, apiKey, backup, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -95,7 +110,7 @@ public sealed partial class AccountActions
         }
 
         _log.Info("已添加 API 供应商：" + providerId);
-        return Added(AccountKind.Api, credentialId, providerId, name, backup, true, ConfigReloadWarning);
+        return Added(AccountKind.Api, credentialId, providerId, name, backup, true, ConfigReloadWarning, fastNote: fastNote);
     }
 
     public async Task<CodexAddPreview> PreviewCodexAuthorizationAsync(JsonObject account, CancellationToken ct = default)
@@ -223,6 +238,6 @@ public sealed partial class AccountActions
         return expected.SetEquals(actual);
     }
 
-    private AccountAddResult Added(AccountKind kind, string id, string provider, string label, string backup, bool complete, string warning, bool saved = true)
-        => new() { Saved = saved, Complete = complete, Kind = kind, CredentialID = id, ProviderID = provider, Label = _secrets.Redact(label), Backup = backup, Warning = _secrets.Redact(warning) };
+    private AccountAddResult Added(AccountKind kind, string id, string provider, string label, string backup, bool complete, string warning, bool saved = true, string fastNote = "")
+        => new() { FastNote = fastNote, Saved = saved, Complete = complete, Kind = kind, CredentialID = id, ProviderID = provider, Label = _secrets.Redact(label), Backup = backup, Warning = _secrets.Redact(warning) };
 }

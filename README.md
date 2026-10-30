@@ -14,12 +14,15 @@
 
 - **切换 dsh 内置的 Codex 账号**：dsh 同一时间只认一个 Codex 账号。本工具把你所有的 Codex 账号保存在自己的加密账号库里，
   点「切号」就把目标账号写成 dsh 当前的 Codex 凭据（dsh 运行中会热加载，不用重启）。
-  - **同时切换 Codex CLI**（设置里的开关，默认开）：切号成功后，把同一个账号也写进 Codex CLI 的 `auth.json`（`$CODEX_HOME/auth.json`，默认 `~/.codex/auth.json`；设置里可改目录）。写之前先加密备份、原子替换并保持 0600、保留文件里其它键，并先把 Codex CLI 自己刷新过的较新令牌写回账号库（用 Codex CLI 自己登录的账号也会先收进账号库）。目录不存在就跳过（不会创建）；凭据存在系统密钥环时只提示不处理；失败不影响 dsh 的切号，状态栏会写“Codex CLI 未同步：原因”。dsh 和 Codex CLI 共用同一份登录令牌，列表里 Codex CLI 用的账号与 dsh 不同时会显示“CLI”标记。
+  - **同时切换 Codex（CLI / 桌面版）**（设置里的开关，默认开；主界面工具栏的“同时切 Codex”勾选同步这个开关）：切号成功后，把同一个账号也写进 Codex 的 `auth.json`（Codex CLI 与桌面版共用这个文件，已打开的桌面版需重启才生效）（`$CODEX_HOME/auth.json`，默认 `~/.codex/auth.json`；设置里可改目录）。写之前先加密备份、原子替换并保持 0600、保留文件里其它键，并先把 Codex CLI 自己刷新过的较新令牌写回账号库（用 Codex CLI 自己登录的账号也会先收进账号库）。目录不存在就跳过（不会创建）；凭据存在系统密钥环时只提示不处理；失败不影响 dsh 的切号，状态栏会写“Codex CLI 未同步：原因”。dsh 和 Codex CLI 共用同一份登录令牌，列表里 Codex CLI 用的账号与 dsh 不同时会显示“CLI”标记。
   - 切号前，如果 dsh 已经刷新了当前账号的令牌，会先把**较新**的令牌写回账号库，绝不用旧令牌覆盖新令牌。
   - dsh 里原本登录的、账号库里还没有的账号，会被自动收进账号库并显示为当前账号。
   - 在一个还没有 Codex 路由的档案里切号时，会顺带启用内置的 `openai-codex` 路由并写入官方现行 Codex 模型（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，只写 id；已有的条目不动；只有“完全是空的”条目（0.1.2 写入的 `openai-codex: {}`，没有任何用户选择）会在导入或切号时补全成这份列表，补全前先做加密备份；只要条目里有任何一个键就保持原样）。
 - **管理 API 供应商**：读写档案里的 `cordis.patch.yml`（`llm-pi-ai` 的 `config.providers`）和凭据文件里的 Key 引用，
   支持新增、编辑（名称 / 地址 / 模型 / Chat Completions 或 Responses 协议 / 换 Key）、删除。只替换被修改的那个供应商的文本。
+  - **模板**：添加 / 编辑窗口的“供应商名称”是可编辑下拉框，内置 OpenAI、火山 Coding Plan、火山 Agent Plan 三个模板；选中模板时只填空着的 URL 和模型（已填的不动），协议只在 URL 被填入时跟着模板走，API Key 不动；仍可输入自定义名称。
+  - **思考程度**：Responses 协议下，火山方舟 Coding / Agent Plan 按方舟文档给支持的模型配置档位；OpenAI 官方 API（`https://api.openai.com/v1`）的 GPT-6 系列（`gpt-6`、`gpt-6.1-sol` 等）配置 low / medium / high / xhigh / max。只补没有档位的模型，已有的不覆盖。
+  - **OpenAI Fast**：官方 OpenAI 地址 + Responses 协议时，窗口里出现“附带 Fast 模型（优先处理，按更高单价计费）”勾选（新建默认勾选）。勾选后为每个 GPT-6 系列模型写一个 `<id>-fast`（名字“… (Fast)”，档位同基础模型，不在模型框里显示）；它们由下面的 Fast 组件（0.2.0）以基础模型 + `service_tier: "priority"` 发出。保存时自动安装 / 更新组件，首次安装或更新后需要完全退出 DSH 再打开；装不上组件时不写 Fast 模型，其余照常保存并提示。
 - **查询额度**：只读 `GET https://chatgpt.com/backend-api/wham/usage`，显示 5 小时与本周期剩余；可设置自动刷新，也可开启“额度快用完时自动切号”。
 - **导入 / 导出 Cockpit 格式 JSON**：解析 Cockpit 导出的账号数组（Codex 账号与 API Key 账号），导入前先做加密备份，导入不会切换当前账号；
   导出是**明文** JSON，默认不覆盖已有文件，文件名 `dsh_yyyy-MM-dd_HH-mm-ss.json`；也可以通过 WebDAV 上传 / 下载。
@@ -41,10 +44,10 @@
   路由里缺的模型会追加进 `openai-codex` 的 `models` 列表：dsh 自带目录里有的写成只有 id；目录里没有的（例如新模型 `gpt-6.1-terra`）带上名字、上下文长度、输入类型和推理档位（OpenAI 没给最大输出，按 128000；dsh 不认识的档位如 `ultra` 会丢掉）。
   本工具记住自己写过哪些模型（`codex-models-state.json`；0.1.3 / 0.1.4 写的也算）。账号不再提供、或落入排除规则的，会连同孪生一起移除——但仍被默认模型等设置引用的不移除（只在结果和日志里说明）；你自己写的条目永远不动。取不到清单时（没有令牌、断网、接口变了）现有模型原样保留；新建的路由先用内置清单（上面四个）。导入结果里有一行“已从 OpenAI 获取账号可用模型：…；新增 …；移除 …”，或“未能获取账号模型清单（原因），保持现有模型不变”。不会改默认模型；子代理候选是这些基础模型（不含 Fast）。
   **上下文长度**：本工具管理的 Codex 模型（基础模型和它们的 Fast 孪生）的 `contextWindow` 设为账号清单里的 `max_context_window`（今天是 872000，约 100 万减去 128000 的输出预留；OpenAI 后端对超过约 92 万的输入会拒绝，所以永远不会写更大的值，更不会写 1000000），取不到该字段时用清单的 `context_window`。只有本工具写的条目会被改：只有 id 的条目加一行 `contextWindow`（其余仍由 dsh 目录补全），显式条目（如 terra）和 Fast 孪生就地改数字；你自己写的条目和你设的 `contextWindow` 不动；取不到清单时保持原值（新建的路由用内置的 872000）。导入结果会写明改了哪些。**上下文越长，每条消息消耗的订阅额度越多。**
-- **Codex Fast 模式（不需要任何第三方插件）**：dsh 本身没有“服务档位”设置，所以本工具自带一个只有几十行的小插件 `dsh-account-manager-fast`（MIT，源码在 `plugins/dsh-account-manager-fast/`，已打包进程序）。
+- **Fast 模式（Codex 订阅与 OpenAI 官方 API，不需要任何第三方插件）**：dsh 本身没有“服务档位”设置，所以本工具自带一个只有几十行的小插件 `dsh-account-manager-fast`（MIT，源码在 `plugins/dsh-account-manager-fast/`，已打包进程序）。
   每次**导入**成功后（以及切号时首次启用 Codex 路由时），如果 `openai-codex` 路由里有 `gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-luna`，本工具会：① 把这个插件装进 dsh 档案（`<DSH_HOME>/profiles/<档案>/node_modules/dsh-account-manager-fast/`，并把它的名字追加到档案 `package.json` 的 `dsh.profile.bundles`；不需要 dsh 命令行、pnpm 或联网，写之前先加密备份 `package.json`，其余字节一个不动）；② 在路由里补上 `gpt-6.1-sol-fast`、`gpt-6-astra-fast`、`gpt-6-luna-fast`（名字是“… (Fast)”，上下文、输出上限、输入类型和推理档位照搬基础模型）。
   选这些 `-fast` 模型时，请求会以基础模型发出并带上 `service_tier: "priority"`（Codex 的 Fast 模式）；其他请求不受影响。不会改默认模型，也不会把 `-fast` 模型交给子代理候选。
-  **首次安装需要完全退出 DSH 再打开**，Fast 模型才可用（dsh 只在启动时读取插件列表）。**Fast 按官方规则以 2.5 倍消耗订阅额度。**
+  **首次安装（或更新组件）后需要完全退出 DSH 再打开**，Fast 模型才可用（dsh 只在启动时读取插件列表）。**Codex 的 Fast 按官方规则以 2.5 倍消耗订阅额度；官方 API 的 Fast 是 OpenAI 的优先处理，按更高单价计费。** 组件 0.2.0 起除 `openai-codex` 路由外，也处理走 `https://api.openai.com`（Responses 协议）且同一供应商里列有基础模型的 `-fast` 模型。
   只在组件装好并列在档案里时才会有 `-fast` 模型；组件缺失或装不上时，本工具会把它自己写入的 `-fast` 模型再移除（避免把 `-fast` 模型名原样发给 OpenAI），你自己写的条目不动。档案还没有 `package.json`（dsh 从没启动过）或它的格式不认识时会拒绝安装并说明原因。
   手动移除：删除 `<DSH_HOME>/profiles/<档案>/node_modules/dsh-account-manager-fast/` 文件夹，从 `package.json` 的 `dsh.profile.bundles` 里去掉 `"dsh-account-manager-fast"`，再删掉路由里的 `*-fast` 模型，重启 dsh。
 - **加密账号库与备份**：账号保存在加密文件里（Windows 用 DPAPI，Linux 用 AES-GCM + 0600 密钥文件）；每次写入前都先做加密备份。

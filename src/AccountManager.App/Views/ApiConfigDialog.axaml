@@ -13,7 +13,7 @@
     <ScrollViewer Grid.Row="1">
       <StackPanel Spacing="5" Margin="0,0,4,4">
         <TextBlock Text="供应商名称（仅修改显示名称，不改变 ID）" FontWeight="SemiBold" />
-        <TextBox x:Name="NameBox" MaxLength="120" />
+        <ComboBox x:Name="NameBox" IsEditable="True" HorizontalAlignment="Stretch" PlaceholderText="选择模板，或直接输入名称" />
 
         <TextBlock Text="接口地址（baseURL，必须 https）" FontWeight="SemiBold" />
         <TextBox x:Name="BaseUrlBox" Watermark="https://example.com/v1" />
@@ -22,6 +22,8 @@
         <TextBox x:Name="ModelsBox" AcceptsReturn="True" Height="84" TextWrapping="NoWrap"
                  Watermark="gpt-4o&#x0a;gpt-4o-mini" />
 
+        <TextBlock x:Name="AutoConfigText" Classes="subtitle" TextWrapping="Wrap" />
+
         <TextBlock Text="API 协议" FontWeight="SemiBold" />
         <StackPanel Orientation="Horizontal" Spacing="16">
           <RadioButton x:Name="ChatRadio" GroupName="ApiProtocol" Content="Chat Completions" />
@@ -29,6 +31,7 @@
         </StackPanel>
         <TextBlock Text="Chat Completions 调用 /chat/completions，Responses 调用 /responses；URL 填基础地址，不要追加接口路径。"
                    Classes="subtitle" TextWrapping="Wrap" />
+        <CheckBox x:Name="FastBox" Content="附带 Fast 模型（优先处理，按更高单价计费）" />
 
         <TextBlock Text="API 密钥（留空表示保留当前密钥）" FontWeight="SemiBold" />
         <TextBox x:Name="KeyBox" PasswordChar="*" Watermark="sk-..." />

@@ -21,5 +21,5 @@ public interface IAddAccountServices
 
     Task<CodexAddPreview> PreviewCodexAuthorizationAsync(JsonObject account);
     Task<AccountAddResult> SaveCodexAuthorizationAsync(CodexAddPreview preview, bool replaceExisting);
-    Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses);
+    Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses, bool fast);
 }

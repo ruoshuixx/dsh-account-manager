@@ -21,6 +21,12 @@ public sealed class ApiConfigInput
 
     /// <summary>True when a local key credential exists (blank key preserves it).</summary>
     public bool HasCredential { get; init; }
+
+    /// <summary>The provider has Fast twin models (hidden from <see cref="Models"/>); the dialog's Fast tick starts from this.</summary>
+    public bool HasFast { get; init; }
+
+    /// <summary>Ids of those hidden twin models.</summary>
+    public IReadOnlyList<string> FastTwinIds { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>Input for the settings dialog.</summary>
@@ -102,6 +108,9 @@ public sealed class ApiConfigResult
 
     /// <summary>New key, or null/empty to keep the current one.</summary>
     public string? NewKey { get; init; }
+
+    /// <summary>The Fast tick (false while it is hidden, i.e. when the address / protocol is not the official OpenAI Responses one).</summary>
+    public bool Fast { get; init; }
 }
 
 /// <summary>Input for the dialog shown before deleting a provider (or models) that dsh's settings still refer to.</summary>

@@ -26,7 +26,10 @@ public sealed record FastSyncResult(
     /// <summary>The component was installed or updated, so dsh must be restarted before it loads it.</summary>
     public bool ComponentChanged => Component is { Changed: true };
 
-    public bool Changed => ComponentChanged || AddedModels.Count > 0 || RemovedModels.Count > 0 || ContextWindowsSet.Count > 0;
+    /// <summary>API Fast twins (<see cref="ApiFastTwins"/>, as "provider id/model id") taken out because the component is not installed.</summary>
+    public IReadOnlyList<string> ApiTwinsRemoved { get; init; } = Array.Empty<string>();
+
+    public bool Changed => ComponentChanged || AddedModels.Count > 0 || RemovedModels.Count > 0 || ContextWindowsSet.Count > 0 || ApiTwinsRemoved.Count > 0;
 }
 
 /// <summary>
@@ -153,9 +156,107 @@ public sealed class CodexFastService
     /// </summary>
     public FastSyncResult Sync(IEnumerable<JsonNode?>? credentials = null)
     {
+        var creds = credentials?.ToList();
+        var result = SyncCodexRoute(creds);
+        var swept = SweepApiTwins(creds);
+        return swept.Count == 0 ? result : result with { ApiTwinsRemoved = swept };
+    }
+
+    /// <summary>
+    /// The same rule as for the Codex twins, for the API providers' twins: a <c>-fast</c> twin this program wrote (<see cref="ApiFastTwins"/>)
+    /// must not stay in the config while the component is not installed and listed (the raw id would reach OpenAI). An outdated copy is
+    /// brought up to date instead. A twin a setting still points at stays. Returns the removed twins as "provider id/model id".
+    /// </summary>
+    public IReadOnlyList<string> SweepApiTwins(IEnumerable<JsonNode?>? credentials = null)
+    {
+        var path = _home().PatchPath;
+        if (!File.Exists(path)) { return Array.Empty<string>(); }
+        var creds = credentials?.ToList();
+        try
+        {
+            var doc = ProfilePatchDocument.Load(path);
+            var found = FindApiTwins(doc);
+            if (found.Count == 0) { return Array.Empty<string>(); }
+
+            var state = _installer.GetStatus().State;
+            if (state == FastComponentState.Installed) { return Array.Empty<string>(); }
+            if (state == FastComponentState.Outdated)
+            {
+                try { _ = _installer.Install(creds); return Array.Empty<string>(); }
+                catch (DshException ex) { _log?.Warn("没有更新 Fast 组件：" + ex.Message); return Array.Empty<string>(); }
+            }
+
+            var referenced = ReferencedApiModels(doc.Text);
+            var doomed = found.Where(f => !referenced.Contains((f.ProviderId, f.ModelId))).ToList();
+            foreach (var kept in found.Except(doomed)) { _log?.Warn("没有移除 Fast 模型 " + kept.ProviderId + "/" + kept.ModelId + "：dsh 的设置（例如默认模型）还在引用它。"); }
+            if (doomed.Count == 0) { return Array.Empty<string>(); }
+
+            var backup = _backups is null ? string.Empty : _backups.Save(creds ?? new List<JsonNode?>(), path, doc.Text);
+            if (backup.Length > 0) { _log?.Info("已生成加密备份（移除 API Fast 模型）：" + backup); }
+            var removed = new List<string>();
+            ProfilePatchDocument.Update(path, d =>
+            {
+                var changed = false;
+                foreach (var group in FindApiTwins(d).Where(t => doomed.Contains(t)).GroupBy(t => t.ProviderId))
+                {
+                    if (d.GetProviders()?[group.Key] is not JsonObject provider || provider["models"] is not JsonArray models) { continue; }
+                    var ids = group.Select(t => t.ModelId).ToHashSet(StringComparer.Ordinal);
+                    var next = (JsonObject)provider.DeepClone();
+                    var list = (JsonArray)next["models"]!;
+                    for (var i = list.Count - 1; i >= 0; i--)
+                    {
+                        if (list[i] is JsonObject m && ProviderViewMapper.ReadString(m, "id") is { } id && ids.Contains(id))
+                        {
+                            list.RemoveAt(i);
+                            removed.Add(group.Key + "/" + id);
+                        }
+                    }
+
+                    if (d.SetProvider(group.Key, next)) { changed = true; }
+                }
+
+                return changed;
+            });
+            if (removed.Count > 0) { _log?.Info("Fast 组件没有安装，已移除 API 供应商里本工具写入的 Fast 模型：" + string.Join("、", removed) + "。"); }
+            return removed;
+        }
+        catch (DshException ex)
+        {
+            _log?.Warn("没有处理 API Fast 模型：" + ex.Message);
+            return Array.Empty<string>();
+        }
+    }
+
+    private sealed record ApiTwin(string ProviderId, string ModelId);
+
+    private static List<ApiTwin> FindApiTwins(ProfilePatchDocument doc)
+    {
+        var found = new List<ApiTwin>();
+        if (doc.GetProviders() is not { } providers) { return found; }
+        foreach (var (id, node) in providers)
+        {
+            if (node is not JsonObject provider) { continue; }
+            foreach (var twin in ApiFastTwins.FindTwinsInProvider(id, provider)) { found.Add(new ApiTwin(id, twin)); }
+        }
+
+        return found;
+    }
+
+    private static HashSet<(string, string)> ReferencedApiModels(string patchText)
+    {
+        try
+        {
+            return ReferenceScanner.ScanUserLayer(patchText)
+                .Where(r => r.Provider != ProviderViewMapper.CodexRouteId && r.EntryId != ProfilePatchDocument.SubagentEntryId)
+                .Select(r => (r.Provider, r.Model)).ToHashSet();
+        }
+        catch (DshException) { return new HashSet<(string, string)>(); }
+    }
+
+    private FastSyncResult SyncCodexRoute(List<JsonNode?>? creds)
+    {
         var path = _home().PatchPath;
         if (!File.Exists(path)) { return Empty(string.Empty); }
-        var creds = credentials?.ToList();
         try { _ = _routes?.UpgradeEmptyCodexRoute(creds); }
         catch (DshException ex) { _log?.Warn("未能补全 openai-codex 路由：" + ex.Message); }
 
@@ -426,6 +527,7 @@ public sealed class CodexFastService
     /// <summary>The user-facing lines for a result, or none when nothing changed and nothing failed.</summary>
     public static IEnumerable<string> Describe(FastSyncResult result)
     {
+        if (result.ApiTwinsRemoved.Count > 0) { yield return "Fast 组件没有安装，已移除 API 供应商里本工具写入的 Fast 模型：" + string.Join("、", result.ApiTwinsRemoved) + "。"; }
         if (result.Component is { Changed: true } c)
         {
             yield return (c.Before == FastComponentState.Outdated ? "已更新" : "已安装") + " Codex Fast 组件 " + FastComponentInstaller.PackageName + " " + c.Version + "。";

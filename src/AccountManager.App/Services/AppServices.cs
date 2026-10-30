@@ -57,7 +57,7 @@ public sealed class AppServices : IAddAccountServices
         ResetCredits = new ResetCreditService();
         Reset = new AccountResetService(Backend, ResetCredits, QuotaSelector, Secrets, Log);
 
-        Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References);
+        Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References) { FastInstaller = CodexFast.Installer };
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
         Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, SubagentRoutes, CodexFast);
     }
@@ -204,8 +204,12 @@ public sealed class AppServices : IAddAccountServices
         => await SaveApiAsync(row, displayName, baseUrl, models, newKey, useResponses, null, ct).ConfigureAwait(false);
 
     public async Task<ApiSaveResult> SaveApiAsync(AccountRow row, string displayName, string baseUrl, IReadOnlyList<string> models, string? newKey, bool useResponses, ReferenceResolution? resolution, CancellationToken ct = default)
+        => await SaveApiAsync(row, displayName, baseUrl, models, newKey, useResponses, resolution, null, ct).ConfigureAwait(false);
+
+    /// <param name="fast">The Fast twins of an official OpenAI provider: true writes them, false removes them, null leaves them.</param>
+    public async Task<ApiSaveResult> SaveApiAsync(AccountRow row, string displayName, string baseUrl, IReadOnlyList<string> models, string? newKey, bool useResponses, ReferenceResolution? resolution, bool? fast, CancellationToken ct = default)
     {
-        var save = await Actions.UpdateManagedApiProviderAsync(row.CredentialId, row.Provider, displayName, baseUrl, models, newKey, useResponses, resolution, ct).ConfigureAwait(false);
+        var save = await Actions.UpdateManagedApiProviderAsync(row.CredentialId, row.Provider, displayName, baseUrl, models, newKey, useResponses, resolution, fast, ct).ConfigureAwait(false);
         return await VerifyApiSaveAsync(save, OpenAiApiProtocol.PackageFor(useResponses)).ConfigureAwait(false);
     }
 
@@ -228,16 +232,16 @@ public sealed class AppServices : IAddAccountServices
     public Task<AccountAddResult> SaveCodexAuthorizationAsync(CodexAddPreview preview, bool replaceExisting)
         => Actions.SaveCodexAuthorizationAsync(preview, replaceExisting);
 
-    public async Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses)
+    public async Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses, bool fast)
     {
-        var added = await Actions.CreateManagedApiProviderAsync(id, name, url, models, key, useResponses).ConfigureAwait(false);
+        var added = await Actions.CreateManagedApiProviderAsync(id, name, url, models, key, useResponses, fast).ConfigureAwait(false);
         if (!added.Saved || !added.Complete) { return added; }
         var runtime = await Backend.VerifyProviderAsync(id, OpenAiApiProtocol.PackageFor(useResponses)).ConfigureAwait(false);
         return new AccountAddResult
         {
             Saved = added.Saved, Complete = added.Complete, Kind = added.Kind,
             CredentialID = added.CredentialID, ProviderID = added.ProviderID, Label = added.Label,
-            Backup = added.Backup, Warning = runtime.Message, RuntimeVerified = runtime.State == ProviderRuntimeState.Applied,
+            Backup = added.Backup, Warning = runtime.Message, FastNote = added.FastNote, RuntimeVerified = runtime.State == ProviderRuntimeState.Applied,
         };
     }
 

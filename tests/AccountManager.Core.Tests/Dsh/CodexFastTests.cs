@@ -21,7 +21,7 @@ public class CodexFastTests
     {
         Assert.Equal(new[] { "LICENSE", "README.md", "cordis.patch.yml", "lib/fast.js", "lib/index.js", "package.json" },
             FastComponentInstaller.EmbeddedFiles.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal).ToArray());
-        Assert.Equal("0.1.0", FastComponentInstaller.EmbeddedVersion);
+        Assert.Equal("0.2.0", FastComponentInstaller.EmbeddedVersion);
         var manifest = JsonNode.Parse(Encoding.UTF8.GetString(FastComponentInstaller.EmbeddedFiles.First(f => f.Path == "package.json").Content))!.AsObject();
         Assert.Equal("dsh-account-manager-fast", manifest["name"]!.GetValue<string>());
         Assert.Equal("./cordis.patch.yml", manifest["dsh"]!["bundle"]!["patch"]!.GetValue<string>());

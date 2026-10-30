@@ -86,7 +86,9 @@ public sealed class SubagentRouteService
         foreach (var (id, node) in providers)
         {
             if (id == ProviderViewMapper.CodexRouteId || node is not JsonObject provider) { continue; }
-            foreach (var model in ModelIds(provider)) { Add(id, model); }
+            // API Fast twins are left out for the same reason as the Codex ones (premium billing a delegating agent should not incur unasked).
+            var twins = ApiFastTwins.FindTwinsInProvider(id, provider);
+            foreach (var model in ModelIds(provider).Where(m => !twins.Contains(m))) { Add(id, model); }
         }
 
         if (providers[ProviderViewMapper.CodexRouteId] is JsonObject codex)

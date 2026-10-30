@@ -27,6 +27,9 @@ public sealed partial class AccountActions
     private readonly AccountMapper _mapper;
     private readonly ReferenceService? _references;
 
+    /// <summary>Installs the Fast component the API Fast twins need; without it no twin is written.</summary>
+    public FastComponentInstaller? FastInstaller { get; set; }
+
     public AccountActions(IAccountBackend api, BackupService backups, SecretRegistry secrets, AppLog log, AccountMapper mapper,
         ReferenceService? references = null)
     {
@@ -118,6 +121,15 @@ public sealed partial class AccountActions
     public async Task<ApiSaveResult> UpdateManagedApiProviderAsync(string credentialId, string providerId,
         string? displayName, string baseUrl, IReadOnlyList<string> modelIds, string? newKey, bool? useResponses,
         ReferenceResolution? resolution, CancellationToken ct = default)
+        => await UpdateManagedApiProviderAsync(credentialId, providerId, displayName, baseUrl, modelIds, newKey, useResponses, resolution, null, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// Also decides the Fast twins (<see cref="ApiFastTwins"/>): true writes one per GPT-6 family model of the official OpenAI Responses
+    /// endpoint (installing the component first), false removes them, null leaves the existing ones.
+    /// </summary>
+    public async Task<ApiSaveResult> UpdateManagedApiProviderAsync(string credentialId, string providerId,
+        string? displayName, string baseUrl, IReadOnlyList<string> modelIds, string? newKey, bool? useResponses,
+        ReferenceResolution? resolution, bool? fast, CancellationToken ct = default)
     {
         var credentialIdText = credentialId ?? string.Empty;
         var providerIdText = providerId ?? string.Empty;
@@ -172,14 +184,33 @@ public sealed partial class AccountActions
         }
 
         settings["baseURL"] = baseUrlText;
-        newDefinition["models"] = MergeModelCatalog(GetValue(newDefinition, "models"), modelMap, OpenAiApiProtocol.UsesResponses(expectedPackage), baseUrlText);
+        var responses = OpenAiApiProtocol.UsesResponses(expectedPackage);
+        var oldModels = GetValue(definition, "models");
+        var twinMode = fast switch { true => FastTwinMode.Create, false => FastTwinMode.Remove, null => FastTwinMode.Keep };
+        var finalModels = ApiFastTwins.Apply(MergeModelCatalog(oldModels, modelMap, responses, baseUrlText), oldModels, baseUrlText, responses, twinMode);
+        var finalKeys = ProviderKeys(finalModels);
 
-        var removedModels = ProviderKeys(GetValue(definition, "models")).Where(m => !modelMap.Contains(m, StringComparer.Ordinal)).ToList();
+        var removedModels = ProviderKeys(oldModels).Where(m => !finalKeys.Contains(m, StringComparer.Ordinal)).ToList();
         if (removedModels.Count > 0) { await ResolveReferencesAsync(providerIdText, removedModels, resolution, ct).ConfigureAwait(false); }
 
         var snapshot = await _api.GetConfigSnapshotAsync(ct).ConfigureAwait(false);
         var backup = _backups.Save(credentials, snapshot.Path, snapshot.Raw);
         _log.Info("已生成加密备份（API 更新）：" + backup);
+
+        // Twins need the plugin: when it cannot be installed none is written (and, if it is not there at all, none is left).
+        var fastNote = string.Empty;
+        if (ApiFastTwins.FindTwins(finalModels, baseUrlText, responses).Count > 0)
+        {
+            var ensured = EnsureFastComponent(credentials);
+            fastNote = ensured.Note;
+            if (!ensured.Usable)
+            {
+                finalModels = ApiFastTwins.Apply(MergeModelCatalog(oldModels, modelMap, responses, baseUrlText), oldModels, baseUrlText, responses, ensured.KeepExisting ? FastTwinMode.Keep : FastTwinMode.Remove);
+                finalKeys = ProviderKeys(finalModels);
+            }
+        }
+
+        newDefinition["models"] = finalModels;
 
         try
         {
@@ -193,19 +224,41 @@ public sealed partial class AccountActions
         // Read back what dsh will see.
         try
         {
-            await AssertDefinitionSavedAsync(providerIdText, baseUrlText, modelMap, expectedPackage, backup, ct).ConfigureAwait(false);
+            await AssertDefinitionSavedAsync(providerIdText, baseUrlText, finalKeys, expectedPackage, backup, ct).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(newKeyText)) { await AssertKeyStoredAsync(providerIdText, newKeyText, backup, ct).ConfigureAwait(false); }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return UpdateResult(ApiCredentialIdOf(providerIdText), providerIdText, backup, false,
-                _secrets.Redact(ex.Message) + " 请手动检查 dsh 配置。");
+                _secrets.Redact(ex.Message) + " 请手动检查 dsh 配置。", fastNote);
         }
 
         _log.Info(string.IsNullOrEmpty(newKeyText)
             ? "已更新 API 供应商配置（保留原 Key）：" + providerIdText
             : "已更新 API 供应商并替换 Key：" + providerIdText);
-        return UpdateResult(ApiCredentialIdOf(providerIdText), providerIdText, backup, true, ConfigReloadWarning);
+        return UpdateResult(ApiCredentialIdOf(providerIdText), providerIdText, backup, true, ConfigReloadWarning, fastNote);
+    }
+
+    /// <summary>
+    /// Makes sure the Fast component is installed before twins are written. <c>Usable</c>: it is. When it is not and cannot be installed,
+    /// <c>KeepExisting</c> says whether twins already stored may stay (the component is there, only this install step failed).
+    /// </summary>
+    private (bool Usable, bool KeepExisting, string Note) EnsureFastComponent(List<JsonNode?> credentials)
+    {
+        var installer = FastInstaller;
+        if (installer is null) { return (false, false, "没有写入 Fast 模型：Fast 组件不可用。"); }
+        try
+        {
+            var result = installer.Install(credentials);
+            return (true, true, result.Changed ? ApiFastTwins.RestartNote : string.Empty);
+        }
+        catch (DshException ex)
+        {
+            var installed = installer.GetStatus().State == FastComponentState.Installed;
+            var note = "没有写入 Fast 模型：" + _secrets.Redact(ex.Message);
+            _log.Warn(note);
+            return (false, installed, note);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -589,7 +642,7 @@ public sealed partial class AccountActions
             Warning = warning,
         };
 
-    private static ApiSaveResult UpdateResult(string credentialId, string providerId, string backup, bool complete, string warning) => new()
+    private static ApiSaveResult UpdateResult(string credentialId, string providerId, string backup, bool complete, string warning, string fastNote = "") => new()
     {
         Updated = true,
         Complete = complete,
@@ -597,5 +650,6 @@ public sealed partial class AccountActions
         ProviderID = providerId,
         Backup = backup,
         Warning = warning,
+        FastNote = fastNote,
     };
 }

@@ -408,7 +408,7 @@ public sealed class CompactLayoutTests : IDisposable
         public IBrowserOAuthSession StartBrowserOAuthSession() => throw new InvalidOperationException();
         public Task<CodexAddPreview> PreviewCodexAuthorizationAsync(System.Text.Json.Nodes.JsonObject account) => throw new InvalidOperationException();
         public Task<AccountAddResult> SaveCodexAuthorizationAsync(CodexAddPreview preview, bool replaceExisting) => throw new InvalidOperationException();
-        public Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses)
+        public Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses, bool fast)
             => Task.FromResult(new AccountAddResult { Saved = true, ProviderID = id, Label = name });
     }
 }

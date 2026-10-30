@@ -1,5 +1,5 @@
-# Codex Fast mode: adds one tiny plugin and nothing else. It only acts on requests
-# for models of the openai-codex route whose id ends in "-fast".
+# Fast mode: adds one tiny plugin and nothing else. It only acts on requests for models whose id ends in
+# "-fast" on the openai-codex route or on the official OpenAI API (api.openai.com, Responses protocol).
 - insert:
     - id: codex-fast
       name: dsh-account-manager-fast

@@ -187,6 +187,8 @@
               <TextBlock Text="删除" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
+          <CheckBox Content="同时切 Codex" IsChecked="{Binding SwitchCodexToo, Mode=TwoWay}" VerticalAlignment="Center" Margin="6,0,0,0"
+                    ToolTip.Tip="切号时一并写入 Codex 的登录文件 auth.json（Codex CLI 与桌面版共用）。桌面版已打开时需重启才生效。" />
         </StackPanel>
         <TextBlock Grid.Column="1" Classes="error" Text="{Binding ProviderWarning}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProviderWarning}" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">

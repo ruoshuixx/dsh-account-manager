@@ -1,7 +1,7 @@
 {
   "name": "dsh-account-manager-fast",
-  "version": "0.1.0",
-  "description": "Codex Fast mode for DeepSeek Harness: models whose id ends in -fast are sent as the base model with the priority service tier",
+  "version": "0.2.0",
+  "description": "Fast mode for DeepSeek Harness: models whose id ends in -fast (Codex route or official OpenAI API) are sent as the base model with the priority service tier",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {

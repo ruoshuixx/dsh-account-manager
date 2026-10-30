@@ -111,6 +111,17 @@ public sealed class SecretRegistry
             message = message.Replace(secret, "[REDACTED]", StringComparison.Ordinal);
         }
 
+        return RedactPatterns(message);
+    }
+
+    /// <summary>
+    /// Only the pattern-based redaction (Bearer, JWT, sk-... keys, long opaque values), without the registered secrets. For text such as
+    /// a provider address, where a registered value that happens to occur in it (a pasted address, a one-letter prefix) must not blank it.
+    /// </summary>
+    public string RedactPatterns(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) { return string.Empty; }
+
         message = ExtraPatterns[0].Replace(message, "Bearer [REDACTED]");
         message = ExtraPatterns[1].Replace(message, "[REDACTED-JWT]");
         message = ExtraPatterns[2].Replace(message, "[REDACTED-KEY]");

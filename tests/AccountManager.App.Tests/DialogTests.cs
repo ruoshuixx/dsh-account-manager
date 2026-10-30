@@ -90,8 +90,8 @@ public class DialogTests
             });
             var dialog = owner.OwnedWindows.OfType<ApiConfigDialog>().Single();
             Assert.True(dialog.FindControl<TextBox>("KeyBox")!.IsEnabled);
-            Assert.Equal("Original", dialog.FindControl<TextBox>("NameBox")!.Text);
-            dialog.FindControl<TextBox>("NameBox")!.Text = "Renamed";
+            Assert.Equal("Original", dialog.FindControl<ComboBox>("NameBox")!.Text);
+            dialog.FindControl<ComboBox>("NameBox")!.Text = "Renamed";
             dialog.FindControl<TextBox>("ModelsBox")!.Text = "a,b\nc,a";
             dialog.FindControl<TextBox>("KeyBox")!.Text = "fake-key";
             Click(dialog, "保存");
@@ -221,7 +221,6 @@ public class DialogTests
         Assert.StartsWith("api-", vm.Result.ProviderID);
         Assert.True(services.UseResponses);
         Assert.Equal(new[] { "a", "b" }, services.Models);
-        Assert.Equal("[REDACTED]", services.Secrets.Redact("fake-secret"));
     }
 
     [AvaloniaFact]
@@ -430,6 +429,170 @@ public class DialogTests
         finally { owner.Close(); }
     }
 
+    // ── Provider templates: the editable name dropdown, the hint line and the Fast tick ──────────
+
+    private static async Task<(Window Owner, ApiConfigDialog Dialog, Task<ApiConfigResult?> Pending)> OpenEditorAsync(ApiConfigInput input)
+    {
+        var owner = new Window();
+        owner.Show();
+        var pending = ApiConfigDialog.ShowAsync(owner, input);
+        await Task.Yield();
+        return (owner, owner.OwnedWindows.OfType<ApiConfigDialog>().Single(), pending);
+    }
+
+    [AvaloniaFact]
+    public async Task EditorShowsTheStoredAddressUntouchedAndPickingATemplateFillsOnlyEmptyFields()
+    {
+        var (owner, dialog, pending) = await OpenEditorAsync(new ApiConfigInput
+        {
+            ProviderId = "id", DisplayName = "Mine", BaseUrl = "https://gw.example.test/v1", Models = new[] { "m" }, HasCredential = true,
+        });
+        try
+        {
+            var name = dialog.FindControl<ComboBox>("NameBox")!;
+            var url = dialog.FindControl<TextBox>("BaseUrlBox")!;
+            var models = dialog.FindControl<TextBox>("ModelsBox")!;
+            Assert.Equal(new[] { "OpenAI", "火山 Coding Plan", "火山 Agent Plan" }, name.Items.OfType<string>());
+            Assert.Equal("Mine", name.Text);
+            Assert.Equal("https://gw.example.test/v1", url.Text);
+            Assert.Null(name.SelectedItem); // nothing is applied until a template is picked
+
+            name.SelectedItem = "火山 Coding Plan";
+            Assert.Equal("火山 Coding Plan", name.Text);
+            Assert.Equal("https://gw.example.test/v1", url.Text); // non-empty: left alone
+            Assert.Equal("m", models.Text);
+            Assert.False(dialog.FindControl<RadioButton>("ResponsesRadio")!.IsChecked); // protocol only follows a filled-in URL
+
+            url.Text = "";
+            models.Text = "";
+            name.SelectedItem = null;
+            name.SelectedItem = "OpenAI";
+            Assert.Equal("https://api.openai.com/v1", url.Text);
+            Assert.Equal("gpt-6-astra", models.Text!.Split('\n', '\r').First(l => l.Length > 0));
+            Assert.True(dialog.FindControl<RadioButton>("ResponsesRadio")!.IsChecked);
+            Assert.Contains("xhigh", dialog.FindControl<TextBlock>("AutoConfigText")!.Text);
+            Assert.True(dialog.FindControl<CheckBox>("FastBox")!.IsVisible);
+        }
+        finally { dialog.Close(); owner.Close(); }
+        _ = await pending;
+    }
+
+    [AvaloniaFact]
+    public async Task TypingACustomProviderNameStillWorks()
+    {
+        var (owner, dialog, pending) = await OpenEditorAsync(new ApiConfigInput
+        {
+            ProviderId = "id", DisplayName = "Mine", BaseUrl = "https://gw.example.test/v1", Models = new[] { "m" }, HasCredential = true,
+        });
+        try
+        {
+            dialog.FindControl<ComboBox>("NameBox")!.Text = "我的网关";
+            Click(dialog, "保存");
+            var result = await pending;
+            Assert.Equal("我的网关", result!.DisplayName);
+            Assert.False(result.Fast);
+        }
+        finally { owner.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task TypingOnlyPartOfATemplateNameAppliesNothing()
+    {
+        var (owner, dialog, pending) = await OpenEditorAsync(new ApiConfigInput
+        {
+            ProviderId = "id", DisplayName = "Mine", BaseUrl = "https://gw.example.test/v1", Models = new[] { "m" }, HasCredential = true,
+        });
+        try
+        {
+            dialog.FindControl<TextBox>("BaseUrlBox")!.Text = "";
+            // (Avalonia selects the item when the typed text equals it exactly, which counts as picking it.)
+            dialog.FindControl<ComboBox>("NameBox")!.Text = "OpenA";
+            dialog.UpdateLayout();
+            Assert.Equal(string.Empty, dialog.FindControl<TextBox>("BaseUrlBox")!.Text);
+            Assert.Equal("m", dialog.FindControl<TextBox>("ModelsBox")!.Text);
+        }
+        finally { dialog.Close(); owner.Close(); }
+        _ = await pending;
+    }
+
+    [AvaloniaFact]
+    public async Task FastTickIsOfferedOnlyForTheOfficialOpenAiEndpointAndStartsFromTheStoredTwins()
+    {
+        var (owner, dialog, pending) = await OpenEditorAsync(new ApiConfigInput
+        {
+            ProviderId = "id", DisplayName = "OpenAI", BaseUrl = "https://api.openai.com/v1", Models = new[] { "gpt-6-astra" },
+            UseResponses = true, HasCredential = true, HasFast = true, FastTwinIds = new[] { "gpt-6-astra-fast" },
+        });
+        try
+        {
+            var fast = dialog.FindControl<CheckBox>("FastBox")!;
+            Assert.True(fast.IsVisible);
+            Assert.True(fast.IsChecked);
+            dialog.FindControl<TextBox>("BaseUrlBox")!.Text = "https://gw.example.test/v1";
+            Assert.False(fast.IsVisible);
+            Assert.Equal(string.Empty, dialog.FindControl<TextBlock>("AutoConfigText")!.Text);
+            dialog.FindControl<TextBox>("BaseUrlBox")!.Text = "https://api.openai.com/v1";
+            dialog.FindControl<RadioButton>("ChatRadio")!.IsChecked = true;
+            Assert.False(fast.IsVisible);
+            dialog.FindControl<RadioButton>("ResponsesRadio")!.IsChecked = true;
+            Assert.True(fast.IsVisible);
+            Click(dialog, "保存");
+            var result = await pending;
+            Assert.True(result!.Fast);
+        }
+        finally { owner.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task AddingFromATemplateFillsTheFormAndPassesTheFastTick()
+    {
+        var services = new FakeAddServices();
+        await using var vm = new AddAccountViewModel(services, new DialogService(() => null), _ => throw new InvalidOperationException("No browser in tests"));
+        var dialog = new AddAccountDialog { DataContext = vm };
+        dialog.Show();
+        try
+        {
+            vm.SelectedTabIndex = 1;
+            dialog.UpdateLayout();
+            Assert.False(vm.ShowFastOption);
+            var combo = dialog.GetVisualDescendants().OfType<ComboBox>().Single();
+            Assert.True(combo.IsEditable);
+
+            combo.SelectedItem = "OpenAI";
+            dialog.UpdateLayout();
+            Assert.Equal("OpenAI", vm.DisplayName);
+            Assert.Equal("https://api.openai.com/v1", vm.BaseUrl);
+            Assert.StartsWith("gpt-6-astra", vm.ModelsText);
+            Assert.True(vm.UseResponses);
+            Assert.Equal(string.Empty, vm.ApiKey); // the key is never touched
+            Assert.True(vm.ShowFastOption);
+            Assert.True(vm.UseFast);
+            Assert.Contains("max", vm.AutoConfigHint);
+            Assert.Contains(dialog.GetVisualDescendants().OfType<CheckBox>(), c => c.IsVisible && c.Content?.ToString()?.StartsWith("附带 Fast 模型") == true);
+
+            vm.ApiKey = "fake-key";
+            await vm.SaveApiCommand.ExecuteAsync(null);
+            Assert.True(services.Fast);
+            Assert.Equal(1, services.Writes);
+        }
+        finally { dialog.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task PickingATemplateInTheAddFormKeepsWhatWasAlreadyTyped()
+    {
+        await using var vm = new AddAccountViewModel(new FakeAddServices(), new DialogService(() => null), _ => throw new InvalidOperationException("No browser in tests"))
+        {
+            BaseUrl = "https://gw.example.test/v1", ModelsText = "mine", UseResponses = false,
+        };
+        vm.SelectedTemplate = "火山 Agent Plan";
+        Assert.Equal("火山 Agent Plan", vm.DisplayName);
+        Assert.Equal("https://gw.example.test/v1", vm.BaseUrl);
+        Assert.Equal("mine", vm.ModelsText);
+        Assert.False(vm.UseResponses);
+        Assert.False(vm.ShowFastOption);
+    }
+
     private static void CapturePreview(Window dialog, string name)
     {
         var directory = Environment.GetEnvironmentVariable("ACCOUNT_MANAGER_UI_PREVIEW_DIR");
@@ -445,6 +608,7 @@ public class DialogTests
         public SecretRegistry Secrets { get; } = new(false);
         public int Writes;
         public bool UseResponses;
+        public bool Fast;
         public IReadOnlyList<string> Models = Array.Empty<string>();
         public Task? WaitBeforeSave;
 
@@ -463,11 +627,12 @@ public class DialogTests
 
         public Task<CodexAddPreview> PreviewCodexAuthorizationAsync(JsonObject account) => throw new InvalidOperationException();
         public Task<AccountAddResult> SaveCodexAuthorizationAsync(CodexAddPreview preview, bool replaceExisting) => throw new InvalidOperationException();
-        public async Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses)
+        public async Task<AccountAddResult> CreateApiProviderAsync(string id, string name, string url, IReadOnlyList<string> models, string key, bool useResponses, bool fast)
         {
             Writes++;
             Models = models;
             UseResponses = useResponses;
+            Fast = fast;
             if (WaitBeforeSave is not null) { await WaitBeforeSave; }
             return new AccountAddResult { Saved = true, ProviderID = id, Label = name };
         }

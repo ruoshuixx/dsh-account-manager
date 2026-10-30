@@ -55,6 +55,17 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
     [ObservableProperty] private string _modelsText = string.Empty;
     [ObservableProperty] private string _apiKey = string.Empty;
     [ObservableProperty] private bool _useResponses;
+    [ObservableProperty] private string? _selectedTemplate;
+    [ObservableProperty] private bool _useFast = true;
+
+    /// <summary>The template names offered in the provider-name dropdown.</summary>
+    public IReadOnlyList<string> TemplateNames => ApiProviderTemplates.Names;
+
+    /// <summary>What will be configured automatically for the current address and protocol (empty when nothing).</summary>
+    public string AutoConfigHint => ApiProviderTemplates.AutoConfigHint(BaseUrl, UseResponses);
+
+    /// <summary>The Fast tick is offered only for the official OpenAI Responses endpoint.</summary>
+    public bool ShowFastOption => ApiFastTwins.Qualifies(BaseUrl?.Trim(), UseResponses);
 
     public bool CanOperate => !IsBusy && !IsSaving && !AuthorizationVerifying && !_disposed;
     public bool IsWorking => IsBusy || IsSaving || AuthorizationVerifying;
@@ -80,8 +91,29 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
     partial void OnAuthorizationVerifyingChanged(bool value) => NotifyCommands();
     partial void OnCallbackUrlChanged(string value) => NotifyCommands();
     partial void OnAuthorizationUrlChanged(string value) => OnPropertyChanged(nameof(HasAuthorizationUrl));
-    partial void OnUseResponsesChanged(bool value) => OnPropertyChanged(nameof(UseChat));
-    partial void OnApiKeyChanged(string value) => _services.Secrets.RegisterValue(value);
+    partial void OnUseResponsesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(UseChat));
+        NotifyApiHints();
+    }
+    partial void OnBaseUrlChanged(string value) => NotifyApiHints();
+
+    partial void OnSelectedTemplateChanged(string? value)
+    {
+        // Picking a template (not typing) fills the empty fields; see ApiProviderTemplates.Apply.
+        if (ApiProviderTemplates.Find(value) is not { } template) { return; }
+        var applied = ApiProviderTemplates.Apply(template, BaseUrl, ModelsText, UseResponses);
+        DisplayName = applied.Name;
+        BaseUrl = applied.BaseUrl;
+        ModelsText = applied.Models;
+        UseResponses = applied.UseResponses;
+    }
+
+    private void NotifyApiHints()
+    {
+        OnPropertyChanged(nameof(AutoConfigHint));
+        OnPropertyChanged(nameof(ShowFastOption));
+    }
 
     partial void OnSelectedTabIndexChanged(int value)
     {
@@ -271,7 +303,7 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
             var models = ApiProviderValidation.ParseModels(ModelsText);
             var key = ApiProviderValidation.Key(ApiKey, required: true);
             StatusText = "正在备份并添加 API 供应商 …";
-            Result = await _services.CreateApiProviderAsync(_providerId, name, url, models, key, UseResponses);
+            Result = await _services.CreateApiProviderAsync(_providerId, name, url, models, key, UseResponses, UseFast && ApiFastTwins.Qualifies(url, UseResponses));
         }
         catch (Exception ex) { ErrorText = _services.Secrets.Redact(ex.Message); }
         finally { IsSaving = false; }

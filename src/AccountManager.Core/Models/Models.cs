@@ -80,6 +80,15 @@ public sealed class ProviderProjection
     public List<string> Models { get; set; } = new();
 
     public List<string> ModelIds { get; set; } = new();
+
+    /// <summary>
+    /// The stored address when it is a plain https address (no userinfo, query or fragment), for the edit dialog; empty otherwise.
+    /// Unlike <see cref="BaseUrl"/> it is never passed through secret masking.
+    /// </summary>
+    public string EditableBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>Ids of the Fast twins (see <c>ApiFastTwins</c>) among <see cref="ModelIds"/>; the edit dialog hides them.</summary>
+    public List<string> FastTwinIds { get; set; } = new();
 }
 
 /// <summary>Result of a manual switch (activate) operation.</summary>
@@ -136,6 +145,9 @@ public sealed class ApiSaveResult
     public string Backup { get; set; } = string.Empty;
 
     public string Warning { get; set; } = string.Empty;
+
+    /// <summary>What happened to the API Fast models (component installed, restart needed, or why they were not written); empty when nothing to say.</summary>
+    public string FastNote { get; set; } = string.Empty;
 }
 
 /// <summary>Result of adding an account; Complete=false means the write needs manual inspection.</summary>
@@ -150,6 +162,9 @@ public sealed class AccountAddResult
     public string Label { get; init; } = string.Empty;
     public string Backup { get; init; } = string.Empty;
     public string Warning { get; init; } = string.Empty;
+
+    /// <summary>What happened to the API Fast models (component installed, restart needed, or why they were not written); empty when nothing to say.</summary>
+    public string FastNote { get; init; } = string.Empty;
 }
 
 /// <summary>Result of an export.</summary>

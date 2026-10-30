@@ -187,6 +187,8 @@ public sealed class AccountMapper
             BaseUrl = baseUrl,
             Models = models,
             ModelIds = modelIds,
+            EditableBaseUrl = EditableUrl(baseRaw),
+            FastTwinIds = ApiFastTwins.FindTwins(JsonMerge.Get(definition, "models"), baseRaw, OpenAiApiProtocol.UsesResponses(JsonMerge.GetString(definition, "package"))).ToList(),
         };
 
         if (credential is null)
@@ -241,6 +243,15 @@ public sealed class AccountMapper
         };
     }
 
+    /// <summary>The stored address as typed when it is a plain https address; empty when it is not (so it is never shown raw).</summary>
+    private static string EditableUrl(string? url)
+    {
+        var text = (url ?? string.Empty).Trim();
+        return Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
+            && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment)
+            && !text.Any(char.IsWhiteSpace) ? text : string.Empty;
+    }
+
     /// <summary>Safe HTTPS scheme://host[:port]/path, stripping credentials/query/fragment.</summary>
     public string SafeBaseUrl(string? url)
     {
@@ -250,7 +261,8 @@ public sealed class AccountMapper
         var safe = uri.Scheme + "://" + uri.Host;
         if (!uri.IsDefaultPort) { safe += ":" + uri.Port; }
         if (!string.IsNullOrWhiteSpace(uri.AbsolutePath) && uri.AbsolutePath != "/") { safe += uri.AbsolutePath; }
-        return Mask(safe);
+        // Pattern redaction only: a registered secret that occurs in the address must not turn the whole address into "[REDACTED]".
+        return _secrets.RedactPatterns(safe);
     }
 
     /// <summary>Merge provider definitions across config documents (low→high priority).</summary>

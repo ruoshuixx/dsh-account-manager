@@ -1,8 +1,11 @@
 // dsh-account-manager-fast (MIT): the whole mechanism, free of any dsh import so it can be tested on its own.
 //
-// A model of the `openai-codex` route whose id ends in "-fast" (for example "gpt-6.1-sol-fast") is sent to
-// ChatGPT as its base model ("gpt-6.1-sol") with `service_tier: "priority"`, which is how Codex asks for Fast
-// mode. Every other request is left exactly as dsh builds it.
+// A model whose id ends in "-fast" (for example "gpt-6.1-sol-fast") is sent as its base model ("gpt-6.1-sol")
+// with `service_tier: "priority"`. That applies to
+//   * the `openai-codex` route (ChatGPT's Fast mode), and
+//   * any other route whose "-fast" model speaks the OpenAI Responses API at https://api.openai.com (OpenAI's
+//     priority processing), provided the base model is listed on the same route.
+// Every other request is left exactly as dsh builds it.
 //
 // dsh has no setting for the service tier, so the plugin wraps one method of the adapter class. For a "-fast"
 // request only, the call is made for the base model (it keeps the base model's full catalog entry, including
@@ -17,6 +20,10 @@ export const PROVIDER = 'openai-codex'
 export const SUFFIX = '-fast'
 /** Value of the wire field Codex uses for Fast mode. */
 export const SERVICE_TIER = 'priority'
+/** The api name of the Responses protocol in dsh's model objects. */
+export const RESPONSES_API = 'openai-responses'
+/** The only host (besides the codex route) whose requests may be sent as Fast. */
+export const OPENAI_HOST = 'api.openai.com'
 /** The adapter method that is wrapped. */
 export const METHOD = 'streamWithSnapshot'
 
@@ -27,6 +34,26 @@ export function baseModelId(id) {
   return typeof id === 'string' && id.length > SUFFIX.length && id.endsWith(SUFFIX)
     ? id.slice(0, -SUFFIX.length)
     : undefined
+}
+
+/** Whether a dsh model object is a Responses-protocol model served by the official OpenAI API. */
+export function isOfficialResponsesModel(model) {
+  if (model === undefined || model === null || model.api !== RESPONSES_API || typeof model.baseUrl !== 'string') return false
+  try {
+    const url = new URL(model.baseUrl)
+    return url.protocol === 'https:' && url.hostname.toLowerCase() === OPENAI_HOST
+  } catch {
+    return false
+  }
+}
+
+/** The model of a route as the adapter resolves it, or undefined when it does not (a lookup that throws counts as "not there"). */
+function resolve(adapter, snapshot, provider, id) {
+  try {
+    return adapter.modelOf(snapshot, provider, id) ?? undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Stream options whose request body gets the priority tier (an earlier onPayload hook still runs first). */
@@ -67,8 +94,14 @@ export function installOn(adapterClass) {
   if (original[MARK] === true) return () => {}
 
   const wrapped = function (options, snapshot) {
-    const base = options?.provider === PROVIDER ? baseModelId(options.model) : undefined
+    const base = baseModelId(options?.model)
     if (base === undefined || snapshot?.models === undefined) return original.call(this, options, snapshot)
+    if (options.provider !== PROVIDER) {
+      // Any other route: only an official-OpenAI Responses twin whose base model is listed next to it.
+      if (typeof this?.modelOf !== 'function') return original.call(this, options, snapshot)
+      if (!isOfficialResponsesModel(resolve(this, snapshot, options.provider, options.model))) return original.call(this, options, snapshot)
+      if (!isOfficialResponsesModel(resolve(this, snapshot, options.provider, base))) return original.call(this, options, snapshot)
+    }
     return original.call(this, { ...options, model: base }, { ...snapshot, models: fastModels(snapshot.models) })
   }
   wrapped[MARK] = true

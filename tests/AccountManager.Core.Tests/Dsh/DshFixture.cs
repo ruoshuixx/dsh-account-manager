@@ -100,7 +100,7 @@ internal sealed class DshFixture : IDisposable
         Mapper = new AccountMapper(Secrets);
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions);
         Switch = new SwitchService(Backend, Mapper);
-        Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References);
+        Actions = new AccountActions(Backend, Backups, Secrets, Log, Mapper, References) { FastInstaller = Fast.Installer };
         Import = new ImportService(Backend, Backups, Secrets, Log, Subscriptions, References, subagents ? Subagents : null, fast ? Fast : null);
         Export = new ExportService(Backend, Secrets, Log, Subscriptions);
     }
