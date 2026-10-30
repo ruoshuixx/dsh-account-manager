@@ -49,7 +49,7 @@ public static class ApiProviderTemplates
     public static string AutoConfigHint(string? baseUrl, bool useResponses)
     {
         if (!useResponses) { return string.Empty; }
-        if (ModelVariantBuilder.IsOpenAiOfficialEndpoint(baseUrl)) { return "将自动配置思考程度 " + string.Join(" / ", ModelVariantBuilder.OpenAiEfforts) + "（GPT-6 系列模型）"; }
+        if (ModelVariantBuilder.IsOpenAiOfficialEndpoint(baseUrl)) { return "将自动配置思考程度 " + string.Join(" / ", ModelVariantBuilder.OpenAiEfforts) + "，上下文 92.2 万 / 输出 12.8 万 / 支持图片（GPT-6 系列模型；超过 27.2 万输入按长上下文价计费）"; }
         if (ModelVariantBuilder.IsArkPlanEndpoint(baseUrl)) { return "将按方舟文档为支持的模型配置思考程度"; }
         return string.Empty;
     }

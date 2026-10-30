@@ -112,11 +112,35 @@ public class ApiProviderTemplateTests
         var entry = ModelVariantBuilder.NewModelEntry("gpt-6-astra", true, "https://gw.example.test/v1");
         Assert.False(entry.ContainsKey("variants"));
         entry["variants"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["id"] = "high" });
-        Assert.False(ModelVariantBuilder.TryAddMissingVariants(entry, "gpt-6-astra", true, OpenAi));
+        Assert.True(ModelVariantBuilder.TryAddMissingVariants(entry, "gpt-6-astra", true, OpenAi)); // only the missing limits
         Assert.Single(entry["variants"]!.AsArray());
+        Assert.False(ModelVariantBuilder.TryAddMissingVariants(entry, "gpt-6-astra", true, OpenAi));
 
         var bare = new System.Text.Json.Nodes.JsonObject { ["name"] = "gpt-6-astra" };
         Assert.True(ModelVariantBuilder.TryAddMissingVariants(bare, "gpt-6-astra", true, OpenAi)); // backfill on re-save
+    }
+
+    [Fact]
+    public void Gpt6ModelsOnTheOfficialEndpointGetTheDocumentedLimitsAndUserValuesAreKept()
+    {
+        var entry = ModelVariantBuilder.NewModelEntry("gpt-6.1-sol", true, OpenAi);
+        var extras = entry[ProviderViewMapper.ExtraKey]!.AsObject();
+        Assert.Equal(922000, extras["contextWindow"]!.GetValue<int>());
+        Assert.Equal(128000, extras["maxTokens"]!.GetValue<int>());
+        Assert.Equal(new[] { "text", "image" }, extras["input"]!.AsArray().Select(n => n!.GetValue<string>()));
+
+        var custom = new System.Text.Json.Nodes.JsonObject
+        {
+            ["name"] = "gpt-6-luna",
+            [ProviderViewMapper.ExtraKey] = new System.Text.Json.Nodes.JsonObject { ["contextWindow"] = 300000 },
+        };
+        Assert.True(ModelVariantBuilder.TryAddMissingVariants(custom, "gpt-6-luna", true, OpenAi));
+        Assert.Equal(300000, custom[ProviderViewMapper.ExtraKey]!["contextWindow"]!.GetValue<int>());
+        Assert.Equal(128000, custom[ProviderViewMapper.ExtraKey]!["maxTokens"]!.GetValue<int>());
+
+        Assert.False(ModelVariantBuilder.NewModelEntry("gpt-6.1-sol", true, "https://gw.example.test/v1").ContainsKey(ProviderViewMapper.ExtraKey));
+        Assert.False(ModelVariantBuilder.NewModelEntry("o9-mini", true, OpenAi).ContainsKey(ProviderViewMapper.ExtraKey));
+        Assert.False(ModelVariantBuilder.NewModelEntry("gpt-6.1-sol", false, OpenAi).ContainsKey(ProviderViewMapper.ExtraKey));
     }
 
     [Fact]

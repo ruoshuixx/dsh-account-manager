@@ -33,7 +33,8 @@ public static class ModelVariantBuilder
     /// </summary>
     public static bool TryAddMissingVariants(JsonObject entry, string modelId, bool useResponses, string? baseUrl)
     {
-        if (!useResponses || entry.ContainsKey("variants")) { return false; }
+        var limitsAdded = useResponses && TryAddMissingOpenAiLimits(entry, modelId, baseUrl);
+        if (!useResponses || entry.ContainsKey("variants")) { return limitsAdded; }
         if (IsArkPlanEndpoint(baseUrl))
         {
             if (!ModelReasoningCatalog.TryGetEffortValues(modelId, out var effortValues)) { return false; }
@@ -47,7 +48,39 @@ public static class ModelVariantBuilder
             return true;
         }
 
-        return false;
+        return limitsAdded;
+    }
+
+    /// <summary>
+    /// The limits OpenAI documents for every GPT-6 model on its API (model pages read 2026-10-30): a 1,050,000-token window of which at
+    /// most 922,000 may be input and 128,000 output, text and image input. dsh would otherwise fall back to 262144 / 32768 / text only for a
+    /// route it has no catalog for. <c>contextWindow</c> is the input maximum, as for the Codex models. Prompts over 272K input tokens are
+    /// billed at long-context rates (2x input, 1.5x output).
+    /// </summary>
+    public const int OpenAiContextWindow = 922000;
+
+    public const int OpenAiMaxTokens = 128000;
+
+    /// <summary>
+    /// Fills <c>contextWindow</c>, <c>maxTokens</c> and <c>input</c> of a GPT-6 model on the official OpenAI endpoint where the entry
+    /// (view form: under <see cref="ProviderViewMapper.ExtraKey"/>) does not set them; values the user set are kept. Returns whether it changed.
+    /// </summary>
+    public static bool TryAddMissingOpenAiLimits(JsonObject entry, string modelId, string? baseUrl)
+    {
+        if (!IsOpenAiOfficialEndpoint(baseUrl) || !IsGpt6Family(modelId)) { return false; }
+        var extras = entry[ProviderViewMapper.ExtraKey] as JsonObject;
+        if (extras is null)
+        {
+            if (entry.ContainsKey(ProviderViewMapper.ExtraKey)) { return false; }
+            extras = new JsonObject();
+            entry[ProviderViewMapper.ExtraKey] = extras;
+        }
+
+        var changed = false;
+        if (!extras.ContainsKey("contextWindow")) { extras["contextWindow"] = OpenAiContextWindow; changed = true; }
+        if (!extras.ContainsKey("maxTokens")) { extras["maxTokens"] = OpenAiMaxTokens; changed = true; }
+        if (!extras.ContainsKey("input")) { extras["input"] = new JsonArray("text", "image"); changed = true; }
+        return changed;
     }
 
     /// <summary>The official OpenAI API: https, host <c>api.openai.com</c>, default port, path <c>/v1</c>, no userinfo, query or fragment.</summary>
