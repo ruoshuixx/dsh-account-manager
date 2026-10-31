@@ -27,20 +27,21 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        // Same selection as 导出: only the ticked rows go up.
         var ids = Accounts
-            .Where(a => !string.IsNullOrWhiteSpace(a.Row.CredentialId))
+            .Where(a => a.IsQuotaSelected && !string.IsNullOrWhiteSpace(a.Row.CredentialId))
             .Select(a => a.Row.CredentialId)
             .Distinct(StringComparer.Ordinal)
             .ToList();
         if (ids.Count == 0)
         {
-            await _dialogs.ShowWarningAsync("无可上传的账号", "请先点击「读取」加载本机 DSH 账号。");
+            await _dialogs.ShowWarningAsync("无可上传的账号", "请先在「选择」列勾选要上传的账号（全选即上传全部）。");
             return;
         }
 
         // New export every upload, with a date-time suffix so earlier uploads are kept.
         var fileName = ExportService.GetExportFileName(DateTime.Now);
-        var message = "将重新导出本机 " + ids.Count + " 个账号（含明文令牌/密钥）并上传到：\n"
+        var message = "将导出勾选的 " + ids.Count + " 个账号（含明文令牌/密钥）并上传到：\n"
             + _services.Settings.WebDavUrl + "\n\n云端文件：" + client.Folder + fileName;
         if (!client.IsSecure) { message += "\n\n⚠ 当前地址不是 HTTPS，凭据可能在传输中被窃听，建议改用 https://。"; }
         message += "\n\n是否继续？";
