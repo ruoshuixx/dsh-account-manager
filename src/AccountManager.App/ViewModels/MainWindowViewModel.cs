@@ -201,7 +201,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     /// <summary>Shown beside the toolbar while Codex or OpenCode is the target: the API provider list below is still dsh's.</summary>
     public string TargetHint => ProviderWarning.Length > 0 ? string.Empty : SelectedSwitchTarget switch
     {
-        SwitchTarget.Codex => "API 已同步给 Codex（仅 Responses）：点“Codex 用”切换",
+        SwitchTarget.Codex => "API 已同步给 Codex（仅 Responses）：点“切换”使用",
         SwitchTarget.OpenCode => "API 已同步给 OpenCode，可直接选用",
         _ => string.Empty,
     };

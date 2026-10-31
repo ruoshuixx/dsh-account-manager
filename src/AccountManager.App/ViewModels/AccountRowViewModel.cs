@@ -217,7 +217,7 @@ public sealed partial class AccountRowViewModel : ObservableObject
     /// <summary>Codex accounts always; an API only while Codex is the target (dsh and OpenCode can use every API at once).</summary>
     public bool CanSwitch => IsCodex || (IsApi && _actions.SelectedSwitchTarget == SwitchTarget.Codex);
 
-    public string SwitchText => IsApi ? "Codex 用" : "切号";
+    public string SwitchText => IsApi ? "切换" : "切号";
 
     public string SwitchTip => IsApi
         ? "让 Codex 改用这个 API（Codex 一次只能用一个）；切回任一 ChatGPT 账号即恢复账号登录"
