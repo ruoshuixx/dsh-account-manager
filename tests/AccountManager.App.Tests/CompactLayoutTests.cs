@@ -176,6 +176,51 @@ public sealed class CompactLayoutTests : IDisposable
         finally { window.Close(); }
     }
 
+    [AvaloniaTheory]
+    [InlineData(1.0)]
+    [InlineData(1.75)]
+    public void PlanTimeAndResetStayOnOneLineAndTheResetButtonsLineUp(double scaling)
+    {
+        var fitted = DialogWindowBounds.FitMainBounds(1368, 768, scaling, MainWindow.DesignMinWidth, MainWindow.DesignMinHeight,
+            MainWindow.DesignMinWidth, MainWindow.DesignMinHeight);
+        var (window, vm) = OpenMain(fitted.MinWidth, fitted.MinHeight, fitted.Zoom);
+        try
+        {
+            vm.Accounts.Clear();
+            var now = DateTimeOffset.UtcNow;
+            foreach (var (id, plan, expires) in new[]
+            {
+                ("d", "team", now.AddDays(9).AddHours(-1)),
+                ("h", "self_serve_business_prolite", now.AddHours(22).AddMinutes(30)),
+                ("m", "self_serve_business_prolite", now.AddMinutes(44)),
+            })
+            {
+                vm.Accounts.Add(new AccountRowViewModel(new AccountRow
+                {
+                    Key = id, CredentialId = id, Kind = AccountKind.Codex, Label = id + "@example.test", Plan = plan,
+                    Status = "就绪", StatusCode = "Ready", SubscriptionExpires = expires,
+                }, vm) { ResetCreditsText = "重置×1" });
+            }
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+
+            Assert.Equal(new[] { "9天", "23小时", "44分" }, vm.Accounts.Select(a => a.SubscriptionDaysText).ToArray());
+            var resets = window.GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible && (b.Content as string) == "重置×1").ToList();
+            Assert.Equal(3, resets.Count);
+            double Mid(Visual v) => v.TranslatePoint(new Point(0, v.Bounds.Height / 2), window)!.Value.Y;
+            foreach (var reset in resets)
+            {
+                var cell = reset.GetVisualParent<Grid>()!;
+                var badge = cell.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text is "team" or "team 高级");
+                Assert.InRange(Math.Abs(Mid(reset) - Mid(badge)), 0, 1.5); // same line
+            }
+            var lefts = resets.Select(b => b.TranslatePoint(new Point(0, 0), window)!.Value.X).ToList();
+            Assert.InRange(lefts.Max() - lefts.Min(), 0, 0.5); // "9天" and "23小时" do not move the button
+            LayoutProbe.AssertClean(window);
+        }
+        finally { window.Close(); }
+    }
+
     [AvaloniaFact]
     public void ClickingTheTickedTargetBoxLeavesItTickedAndClickingAnotherMovesTheTick()
     {

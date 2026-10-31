@@ -73,7 +73,7 @@
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="34" />
           <ColumnDefinition Width="*" MinWidth="140" />
-          <ColumnDefinition Width="150" />
+          <ColumnDefinition Width="180" />
           <ColumnDefinition Width="128" />
           <ColumnDefinition Width="128" />
           <ColumnDefinition Width="182" />
@@ -98,19 +98,19 @@
           <TextBlock Classes="subtitle" Text="{Binding Subtitle}" IsVisible="{Binding HasSubtitle}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding AccountTooltip}" />
         </StackPanel>
 
-        <!-- subscription info: two fixed lines so every row looks the same — plan badge, then remaining time + reset -->
-        <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,2,8,2" Spacing="2" ClipToBounds="True" ToolTip.Tip="{Binding PlanTooltip}">
-          <Border Classes="chip" Background="{Binding PlanBackground}" Padding="7,1" HorizontalAlignment="Left">
+        <!-- subscription info on one line: plan badge | remaining time | reset. The reset button sits in its own
+             right-hand column, so "23小时" vs "9天" never moves it or pushes it to a second line. -->
+        <Grid Grid.Column="2" ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center" Margin="0,2,8,2" ClipToBounds="True" ToolTip.Tip="{Binding PlanTooltip}">
+          <Border Classes="chip" Background="{Binding PlanBackground}" Padding="7,1" Margin="0,0,6,0" MaxWidth="80" HorizontalAlignment="Left">
             <TextBlock Text="{Binding PlanText}" Foreground="{Binding PlanForeground}" FontWeight="SemiBold" FontSize="11" TextTrimming="CharacterEllipsis" />
           </Border>
-          <StackPanel Orientation="Horizontal" IsVisible="{Binding IsCodex}">
-            <TextBlock Text="{Binding SubscriptionDaysText}" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" MaxWidth="70" TextTrimming="CharacterEllipsis" />
-            <Button Classes="chipAction"
-                    Content="{Binding ResetCreditsText}"
-                    Command="{Binding ResetCommand}"
-                    ToolTip.Tip="{Binding ResetCreditsTooltip}" />
-          </StackPanel>
-        </StackPanel>
+          <TextBlock Grid.Column="1" Text="{Binding SubscriptionDaysText}" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,4,0" TextTrimming="CharacterEllipsis" IsVisible="{Binding IsCodex}" />
+          <Button Grid.Column="2" Classes="chipAction"
+                  Content="{Binding ResetCreditsText}"
+                  Command="{Binding ResetCommand}"
+                  IsVisible="{Binding IsCodex}"
+                  ToolTip.Tip="{Binding ResetCreditsTooltip}" />
+        </Grid>
 
         <ContentControl Grid.Column="3"
                         Content="{Binding Quota5h}"
@@ -274,7 +274,7 @@
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="34" />
             <ColumnDefinition Width="*" MinWidth="140" />
-            <ColumnDefinition Width="150" />
+            <ColumnDefinition Width="180" />
             <ColumnDefinition Width="128" />
             <ColumnDefinition Width="128" />
             <ColumnDefinition Width="182" />
