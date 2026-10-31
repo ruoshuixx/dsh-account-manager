@@ -195,10 +195,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         OnPropertyChanged(nameof(SwitchTargetCodex));
         OnPropertyChanged(nameof(SwitchTargetOpenCode));
         OnPropertyChanged(nameof(TargetHint));
+        foreach (var row in Accounts) { row.NotifySwitchTargetChanged(); }
     }
 
     /// <summary>Shown beside the toolbar while Codex or OpenCode is the target: the API provider list below is still dsh's.</summary>
-    public string TargetHint => SelectedSwitchTarget == SwitchTarget.Dsh || ProviderWarning.Length > 0 ? string.Empty : "API 列表为 dsh 的供应商";
+    public string TargetHint => ProviderWarning.Length > 0 ? string.Empty : SelectedSwitchTarget switch
+    {
+        SwitchTarget.Codex => "API 已同步给 Codex（仅 Responses）：点“Codex 用”切换",
+        SwitchTarget.OpenCode => "API 已同步给 OpenCode，可直接选用",
+        _ => string.Empty,
+    };
 
     partial void OnProviderWarningChanged(string value) => OnPropertyChanged(nameof(TargetHint));
 
@@ -229,6 +235,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             ApplySnapshot(snapshot);
             StatusText = "已读取 " + snapshot.Accounts.Count + " 个账号。";
             _ = CheckReferencesAsync();
+            if (_backgroundWork) { _ = ShareApisAsync(); }
         }
         catch (Exception ex)
         {
@@ -238,6 +245,31 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private int _sharing;
+
+    /// <summary>
+    /// After every read: dsh's API list is written into OpenCode and Codex in the background, so an API added, edited or
+    /// removed here is the same in all three. Only problems are shown; a missing OpenCode or Codex is not one.
+    /// </summary>
+    private async Task ShareApisAsync()
+    {
+        if (Interlocked.Exchange(ref _sharing, 1) == 1) { return; }
+        try
+        {
+            var result = await Task.Run(() => _services.ShareApisAsync()).ConfigureAwait(true);
+            PersistSettings();
+            if (result.Notes.Count > 0) { StatusText = string.Join("；", result.Notes); }
+        }
+        catch (Exception ex)
+        {
+            _services.Log.Warn("同步 API 失败：" + _services.Secrets.Redact(ex.Message));
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _sharing, 0);
         }
     }
 

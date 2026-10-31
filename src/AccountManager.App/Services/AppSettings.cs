@@ -30,6 +30,12 @@ public sealed class AppSettings
     /// </summary>
     public bool? SwitchCodexCliToo { get; set; }
 
+    /// <summary>API provider ids this tool wrote into OpenCode (only these are removed again when dsh no longer has them).</summary>
+    public List<string> SharedOpenCodeApis { get; set; } = new();
+
+    /// <summary>API provider ids this tool wrote into Codex's config.toml (same rule).</summary>
+    public List<string> SharedCodexApis { get; set; } = new();
+
     public int AutoRefreshMinutes { get; set; } = 5;
 
     /// <summary>When true, low quota on the active Codex account triggers polling and an automatic switch.</summary>

@@ -130,10 +130,10 @@
 
         <!-- actions -->
         <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Classes="mini" Command="{Binding SwitchCommand}" IsVisible="{Binding IsCodex}" ToolTip.Tip="把该账号切给当前选中的目标（dsh / Codex / OpenCode）">
+          <Button Classes="mini" Command="{Binding SwitchCommand}" IsVisible="{Binding CanSwitch}" ToolTip.Tip="{Binding SwitchTip}">
             <StackPanel Orientation="Horizontal" Spacing="4">
               <PathIcon Data="{StaticResource IcoSwitch}" />
-              <TextBlock Text="切号" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding SwitchText}" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
           <Button Classes="mini" Command="{Binding RefreshCommand}" IsVisible="{Binding IsCodex}" ToolTip.Tip="只读查询该账号额度">
@@ -192,7 +192,7 @@
           <CheckBox x:Name="TargetOpenCodeBox" Content="OpenCode" IsChecked="{Binding SwitchTargetOpenCode, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
                     ToolTip.Tip="切号把该账号设为 OpenCode 里 openai 的当前 OAuth 凭据（需要已安装 OpenCode）。" />
         </StackPanel>
-        <TextBlock Grid.Column="1" Classes="subtitle" Text="{Binding TargetHint}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="切换目标不是 dsh 时，下面的 API 供应商仍是 dsh 的配置；后续版本会按目标分别切换。" />
+        <TextBlock Grid.Column="1" Classes="subtitle" Text="{Binding TargetHint}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="API 只需在这里加一次：dsh、OpenCode、Codex 三边共用。OpenCode 可同时选用所有 API；Codex 一次只用一个，且只支持 Responses 协议。" />
         <TextBlock Grid.Column="1" Classes="error" Text="{Binding ProviderWarning}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProviderWarning}" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Button Classes="toolbar" Command="{Binding ReadDshCommand}">

@@ -159,7 +159,10 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         Assert.Equal(string.Empty, vm.TargetHint);
 
         vm.SwitchTargetOpenCode = true;
-        Assert.Contains("dsh", vm.TargetHint);
+        Assert.Contains("OpenCode", vm.TargetHint);
+
+        vm.SwitchTargetCodex = true;
+        Assert.Contains("Responses", vm.TargetHint);
 
         vm.ProviderWarning = "供应商缺少 Key";
         Assert.Equal(string.Empty, vm.TargetHint);

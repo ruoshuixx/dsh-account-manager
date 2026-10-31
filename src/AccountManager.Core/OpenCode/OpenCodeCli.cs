@@ -301,6 +301,19 @@ public sealed class OpenCodeCli
         return output;
     }
 
+    /// <summary>The global configuration directory (<c>opencode debug paths</c>, line <c>config &lt;dir&gt;</c>).</summary>
+    public async Task<string> GetConfigDirectoryAsync(CancellationToken cancellationToken = default)
+    {
+        var output = await RunAsync(new[] { "debug", "paths" }, cancellationToken).ConfigureAwait(false);
+        foreach (var line in output.Split('\n'))
+        {
+            var trimmed = line.TrimEnd('\r').Trim();
+            if (trimmed.StartsWith("config ", StringComparison.Ordinal)) { return trimmed["config ".Length..].Trim(); }
+        }
+
+        throw new OpenCodeException("无法确定 OpenCode 的全局配置目录。");
+    }
+
     private static void TryKill(Process process)
     {
         try { process.Kill(entireProcessTree: true); } catch { /* ignore */ }

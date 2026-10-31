@@ -134,6 +134,9 @@ public interface IRowActions
     Task DeleteAsync(AccountRowViewModel row);
 
     Task ConfigureAsync(AccountRowViewModel row);
+
+    /// <summary>The program a switch writes to; API rows can be switched only for Codex (one provider at a time).</summary>
+    SwitchTarget SelectedSwitchTarget => SwitchTarget.Dsh;
 }
 
 /// <summary>One account row bound to the list.</summary>
@@ -208,7 +211,18 @@ public sealed partial class AccountRowViewModel : ObservableObject
 
     public bool IsApi => Row.Kind == AccountKind.Api;
 
-    public bool IsCurrent => IsCodex && Row.TargetCurrent;
+    public bool IsCurrent => (IsCodex || IsApi) && Row.TargetCurrent;
+
+    /// <summary>Codex accounts always; an API only while Codex is the target (dsh and OpenCode can use every API at once).</summary>
+    public bool CanSwitch => IsCodex || (IsApi && _actions.SelectedSwitchTarget == SwitchTarget.Codex);
+
+    public string SwitchText => IsApi ? "Codex 用" : "切号";
+
+    public string SwitchTip => IsApi
+        ? "让 Codex 改用这个 API（Codex 一次只能用一个）；切回任一 ChatGPT 账号即恢复账号登录"
+        : "把该账号切给当前选中的目标（dsh / Codex / OpenCode）";
+
+    public void NotifySwitchTargetChanged() => OnPropertyChanged(nameof(CanSwitch));
 
     public string Title => string.IsNullOrWhiteSpace(Row.Label)
         ? (string.IsNullOrWhiteSpace(Row.Identity) ? Row.Key : Row.Identity)
@@ -325,7 +339,7 @@ public sealed partial class AccountRowViewModel : ObservableObject
     };
 
     [RelayCommand]
-    private Task Switch() => IsCodex ? _actions.SwitchAsync(this) : Task.CompletedTask;
+    private Task Switch() => CanSwitch ? _actions.SwitchAsync(this) : Task.CompletedTask;
 
     [RelayCommand]
     private Task Refresh() => IsCodex ? _actions.RefreshAsync(this) : Task.CompletedTask;

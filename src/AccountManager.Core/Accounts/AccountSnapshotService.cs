@@ -127,6 +127,12 @@ public sealed class AccountSnapshotService
             }
         }
 
+        // Codex may use an API instead of a ChatGPT login; then that API row is its current one.
+        foreach (var row in accounts.Where(a => a.Kind == AccountKind.Api))
+        {
+            row.TargetCurrent = target == SwitchTarget.Codex && targetCurrent is not null && row.CredentialId == targetCurrent;
+        }
+
         return new AccountSnapshot
         {
             Accounts = accounts,

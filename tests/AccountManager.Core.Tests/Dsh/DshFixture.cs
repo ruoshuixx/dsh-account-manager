@@ -8,6 +8,7 @@ using AccountManager.Core.Import;
 using AccountManager.Core.Logging;
 using AccountManager.Core.OpenCode;
 using AccountManager.Core.Security;
+using AccountManager.Core.Sharing;
 
 namespace AccountManager.Core.Tests;
 
@@ -102,7 +103,10 @@ internal sealed class DshFixture : IDisposable
         CodexStore = new CodexCliAuthStore(() => CodexHome, Backups, _ => null, () => Root);
         OpenCodeApi = new FakeOpenCodeApi { Unavailable = true };
         OpenCode = new OpenCodeAccountStore(OpenCodeApi, Secrets, Log);
-        Targets = new SwitchTargets(Backend, Vault, CodexStore, OpenCode, Secrets, Log, () => Target);
+        CodexApi = new CodexApiConfig(CodexStore, Backups);
+        OpenCodeConfig = new FakeOpenCodeConfig(Path.Combine(Root, "opencode", "opencode.json"));
+        Share = new ApiShareService(Backend, CodexApi, OpenCodeApi, OpenCodeConfig, Secrets, Log, Backups);
+        Targets = new SwitchTargets(Backend, Vault, CodexStore, OpenCode, Secrets, Log, () => Target, CodexApi);
         Backend.SelectedTarget = () => Target;
         Backend.TargetRefresher = Targets.RefreshIfCurrentAsync;
         Snapshot = new AccountSnapshotService(Backend, Mapper, Secrets, Subscriptions, Targets);
@@ -144,6 +148,10 @@ internal sealed class DshFixture : IDisposable
     public FakeOpenCodeApi OpenCodeApi { get; }
     public IOpenCodeAccounts OpenCode { get; }
     public SwitchTargets Targets { get; }
+    public CodexApiConfig CodexApi { get; }
+    public FakeOpenCodeConfig OpenCodeConfig { get; }
+    public ApiShareService Share { get; }
+    public string CodexConfigPath => Path.Combine(CodexHome, "config.toml");
 
     public string CodexHome => Path.Combine(Root, "codex");
     public string CodexAuthPath => Path.Combine(CodexHome, "auth.json");
@@ -307,5 +315,49 @@ internal sealed class FakeOpenCodeApi : IOpenCodeCredentialApi
         if (FailDelete) { throw new OpenCodeException("OpenCode 请求失败，退出码 1；分类：Conflict。"); }
         Credentials.RemoveAll(c => c["id"]!.GetValue<string>() == credentialId);
         return Task.CompletedTask;
+    }
+}
+
+/// <summary>An opencode.json in the temp root; "not installed" follows the fake OpenCode API.</summary>
+internal sealed class FakeOpenCodeConfig : IOpenCodeConfigFile
+{
+    private readonly OpenCodeConfigFileOnDisk _disk;
+
+    public FakeOpenCodeConfig(string path) => _disk = new OpenCodeConfigFileOnDisk(path);
+
+    public string Path => _disk.Path;
+
+    public int Writes { get; private set; }
+
+    public JsonObject? Read() => File.Exists(Path) ? (JsonObject)JsonNode.Parse(File.ReadAllText(Path))! : null;
+
+    public Task<OpenCodeConfigDocument> ReadAsync(CancellationToken cancellationToken = default) => Task.FromResult(_disk.Read());
+
+    public Task WriteAsync(OpenCodeConfigDocument document, CancellationToken cancellationToken = default)
+    {
+        Writes++;
+        _disk.Write(document);
+        return Task.CompletedTask;
+    }
+
+    private sealed class OpenCodeConfigFileOnDisk
+    {
+        public OpenCodeConfigFileOnDisk(string path) => Path = path;
+
+        public string Path { get; }
+
+        public OpenCodeConfigDocument Read()
+        {
+            var raw = File.Exists(Path) ? File.ReadAllText(Path) : null;
+            return new OpenCodeConfigDocument { Path = Path, Raw = raw, Config = raw is null ? new JsonObject() : (JsonObject)JsonNode.Parse(raw)! };
+        }
+
+        public void Write(OpenCodeConfigDocument document)
+        {
+            var now = File.Exists(Path) ? File.ReadAllText(Path) : null;
+            if (now != document.Raw) { throw new OpenCodeException("changed meanwhile"); }
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+            File.WriteAllText(Path, document.Config.ToJsonString());
+        }
     }
 }

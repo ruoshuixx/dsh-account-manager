@@ -4,6 +4,7 @@ using AccountManager.Core.Json;
 using AccountManager.Core.Logging;
 using AccountManager.Core.OpenCode;
 using AccountManager.Core.Security;
+using AccountManager.Core.Sharing;
 
 namespace AccountManager.Core.Accounts;
 
@@ -21,10 +22,12 @@ public sealed class SwitchTargets
     private readonly SecretRegistry _secrets;
     private readonly AppLog? _log;
     private readonly Func<SwitchTarget> _selected;
+    private readonly CodexApiConfig? _codexApi;
 
     public SwitchTargets(DshBackend dsh, AccountVault vault, CodexCliAuthStore codex, IOpenCodeAccounts openCode,
-        SecretRegistry secrets, AppLog? log, Func<SwitchTarget> selected)
+        SecretRegistry secrets, AppLog? log, Func<SwitchTarget> selected, CodexApiConfig? codexApi = null)
     {
+        _codexApi = codexApi;
         _dsh = dsh ?? throw new ArgumentNullException(nameof(dsh));
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _codex = codex ?? throw new ArgumentNullException(nameof(codex));
@@ -52,6 +55,8 @@ public sealed class SwitchTargets
             {
                 case SwitchTarget.Codex:
                 {
+                    // Codex using an API: that API's row is current, whichever ChatGPT login auth.json holds.
+                    if (_codexApi?.CurrentApi() is { } api) { return (DshBackend.ApiCredentialId(api), string.Empty); }
                     if (_codex.CheckUsable(forWrite: false) is { } unusable) { return (null, "Codex：" + unusable.Message); }
                     if (!File.Exists(_codex.AuthPath)) { return (null, "Codex 未登录（没有 " + _codex.AuthPath + "）"); }
                     var cli = _codex.ReadCurrent();
@@ -165,17 +170,34 @@ public sealed class SwitchTargets
     {
         var record = _vault.FindById(vaultId) ?? throw new DshException("未找到该账号；它可能已被移除，请刷新后重试。");
         var result = _codex.Write(record, DateTimeOffset.UtcNow);
+        if (result.Kind is not (CodexCliSyncKind.Written or CodexCliSyncKind.Unchanged)) { throw new DshException("未能切换 Codex：" + result.Message + "。"); }
+        // Back from an API to the ChatGPT login.
+        var leftApi = _codexApi?.LeaveApi() ?? false;
+        if (leftApi) { _log?.Info("Codex：已停用 API，改回 ChatGPT 账号登录"); }
         switch (result.Kind)
         {
             case CodexCliSyncKind.Written:
                 _log?.Info("Codex：已把该账号写入 " + _codex.AuthPath + "（已先做加密备份）");
-                return new SwitchOutcome(true, "已打开的 Codex 桌面版需要重启才生效");
+                return new SwitchOutcome(true, CodexRestartNote);
+            case CodexCliSyncKind.Unchanged when leftApi:
+                return new SwitchOutcome(true, CodexRestartNote);
             case CodexCliSyncKind.Unchanged:
                 _log?.Info("Codex 已是该账号，无需改动");
                 return new SwitchOutcome(false, string.Empty);
             default:
                 throw new DshException("未能切换 Codex：" + result.Message + "。");
         }
+    }
+
+    private const string CodexRestartNote = "已打开的 Codex 桌面版需要完全退出、重启后才生效";
+
+    /// <summary>Makes Codex use this API provider (its <c>config.toml</c> profile); the ChatGPT login stays in auth.json.</summary>
+    public SwitchOutcome UseCodexApi(string providerId)
+    {
+        if (_codexApi is null || !_codexApi.Available) { throw new DshException("没有找到 Codex（" + _codex.Home + "）。"); }
+        if (!_codexApi.Use(providerId)) { return new SwitchOutcome(false, string.Empty); }
+        _log?.Info("Codex：已改用 API " + providerId);
+        return new SwitchOutcome(true, CodexRestartNote);
     }
 
     public async Task<SwitchOutcome> ActivateOpenCodeAsync(string vaultId, CancellationToken ct = default)

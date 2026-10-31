@@ -10,6 +10,7 @@ using AccountManager.Core.Models;
 using AccountManager.Core.OpenCode;
 using AccountManager.Core.Quota;
 using AccountManager.Core.Security;
+using AccountManager.Core.Sharing;
 using AccountManager.Core.Sync;
 
 namespace AccountManager.App.Services;
@@ -27,7 +28,7 @@ public sealed class AppServices : IAddAccountServices
     /// <param name="openCodeApi">Test seam: stands in for the OpenCode CLI, so no real OpenCode is ever run.</param>
     /// <param name="vault">Test seam: a vault with its own encryption, so no real key store is used.</param>
     /// <param name="backups">Test seam: a backup service with its own encryption.</param>
-    public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null, IOpenCodeCredentialApi? openCodeApi = null, AccountVault? vault = null, BackupService? backups = null)
+    public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null, IOpenCodeCredentialApi? openCodeApi = null, AccountVault? vault = null, BackupService? backups = null, IOpenCodeConfigFile? openCodeConfig = null)
     {
         Settings = settings;
         Secrets = new SecretRegistry();
@@ -45,8 +46,11 @@ public sealed class AppServices : IAddAccountServices
             SelectedTarget = () => Settings.SwitchTarget,
         };
         OpenCodeCli = new OpenCodeCli(new OpenCodeCliOptions { CliPath = settings.OpenCodeCliPath }, Secrets, Log);
-        OpenCodeAccounts = new OpenCodeAccountStore(openCodeApi ?? new OpenCodeApi(OpenCodeCli, Secrets), Secrets, Log);
-        Targets = new SwitchTargets(Backend, Vault, CodexCli, OpenCodeAccounts, Secrets, Log, () => Settings.SwitchTarget);
+        var openCodeCredentials = openCodeApi ?? new OpenCodeApi(OpenCodeCli, Secrets);
+        OpenCodeAccounts = new OpenCodeAccountStore(openCodeCredentials, Secrets, Log);
+        CodexApi = new CodexApiConfig(CodexCli, Backups);
+        Share = new ApiShareService(Backend, CodexApi, openCodeCredentials, openCodeConfig ?? new OpenCodeConfigFile(OpenCodeCli), Secrets, Log, Backups);
+        Targets = new SwitchTargets(Backend, Vault, CodexCli, OpenCodeAccounts, Secrets, Log, () => Settings.SwitchTarget, CodexApi);
         Backend.TargetRefresher = Targets.RefreshIfCurrentAsync;
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
         SubagentRoutes = new SubagentRouteService(() => Backend.Home, Backups, Secrets, Log);
@@ -89,6 +93,24 @@ public sealed class AppServices : IAddAccountServices
     public OpenCodeCli OpenCodeCli { get; }
 
     public IOpenCodeAccounts OpenCodeAccounts { get; }
+
+    public CodexApiConfig CodexApi { get; }
+
+    /// <summary>Keeps OpenCode's and Codex's API providers equal to dsh's.</summary>
+    public ApiShareService Share { get; }
+
+    /// <summary>
+    /// Writes dsh's API list into OpenCode and Codex and remembers what was written. Returns the notes worth showing
+    /// (a missing program is not one) and whether anything changed.
+    /// </summary>
+    public async Task<ShareResult> ShareApisAsync(CancellationToken ct = default)
+    {
+        var previous = new SharedState(Settings.SharedOpenCodeApis.ToList(), Settings.SharedCodexApis.ToList());
+        var result = await Share.SyncAsync(previous, ct).ConfigureAwait(false);
+        Settings.SharedOpenCodeApis = result.State.OpenCode.ToList();
+        Settings.SharedCodexApis = result.State.Codex.ToList();
+        return result;
+    }
 
     /// <summary>dsh, Codex and OpenCode as switch targets.</summary>
     public SwitchTargets Targets { get; }
