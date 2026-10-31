@@ -170,6 +170,7 @@ public sealed partial class AccountRowViewModel : ObservableObject
     private string _subscriptionDaysText = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PlanTooltip))]
     private string _subscriptionTooltip = string.Empty;
 
     /// <summary>
@@ -245,7 +246,12 @@ public sealed partial class AccountRowViewModel : ObservableObject
         }
     }
 
-    public string PlanText => string.IsNullOrWhiteSpace(Row.Plan) ? "—" : Row.Plan;
+    public string PlanText => PlanNames.Display(Row.Plan);
+
+    /// <summary>Raw plan type on hover when the badge shows a short name.</summary>
+    public string PlanTooltip => PlanText == (Row.Plan ?? string.Empty).Trim() || string.IsNullOrWhiteSpace(Row.Plan)
+        ? SubscriptionTooltip
+        : "套餐：" + Row.Plan!.Trim() + Environment.NewLine + SubscriptionTooltip;
 
     /// <summary>Team-plan badge colour: same ChatGPT account/workspace id → same colour.</summary>
     public IBrush PlanBackground { get; }

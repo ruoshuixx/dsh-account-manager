@@ -98,19 +98,19 @@
           <TextBlock Classes="subtitle" Text="{Binding Subtitle}" IsVisible="{Binding HasSubtitle}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding AccountTooltip}" />
         </StackPanel>
 
-        <!-- subscription info: team-coloured plan badge + remaining days; wraps instead of overflowing -->
-        <WrapPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,2,8,2" ClipToBounds="True" ToolTip.Tip="{Binding SubscriptionTooltip}">
-          <Border Classes="chip" Background="{Binding PlanBackground}" Padding="7,1" Margin="0,1,6,1" MaxWidth="140">
+        <!-- subscription info: two fixed lines so every row looks the same — plan badge, then remaining time + reset -->
+        <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,2,8,2" Spacing="2" ClipToBounds="True" ToolTip.Tip="{Binding PlanTooltip}">
+          <Border Classes="chip" Background="{Binding PlanBackground}" Padding="7,1" HorizontalAlignment="Left">
             <TextBlock Text="{Binding PlanText}" Foreground="{Binding PlanForeground}" FontWeight="SemiBold" FontSize="11" TextTrimming="CharacterEllipsis" />
           </Border>
-          <TextBlock Text="{Binding SubscriptionDaysText}" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,1,6,1" MaxWidth="100" TextTrimming="CharacterEllipsis" />
-          <Button Classes="chipAction"
-                  Content="{Binding ResetCreditsText}"
-                  Command="{Binding ResetCommand}"
-                  IsVisible="{Binding IsCodex}"
-                  Margin="0,1,0,1"
-                  ToolTip.Tip="{Binding ResetCreditsTooltip}" />
-        </WrapPanel>
+          <StackPanel Orientation="Horizontal" IsVisible="{Binding IsCodex}">
+            <TextBlock Text="{Binding SubscriptionDaysText}" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0" MaxWidth="70" TextTrimming="CharacterEllipsis" />
+            <Button Classes="chipAction"
+                    Content="{Binding ResetCreditsText}"
+                    Command="{Binding ResetCommand}"
+                    ToolTip.Tip="{Binding ResetCreditsTooltip}" />
+          </StackPanel>
+        </StackPanel>
 
         <ContentControl Grid.Column="3"
                         Content="{Binding Quota5h}"
