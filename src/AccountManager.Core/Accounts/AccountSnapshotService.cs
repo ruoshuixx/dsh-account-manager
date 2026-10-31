@@ -31,6 +31,8 @@ public sealed class AccountSnapshotService
 
     public async Task<AccountSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
+        if (_targets is not null) { _targets.AbsorbCurrent(_targets.Selected); }
+
         JsonArray credentials;
         try
         {

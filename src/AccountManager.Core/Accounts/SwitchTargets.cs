@@ -52,9 +52,22 @@ public sealed class SwitchTargets
             {
                 case SwitchTarget.Codex:
                 {
-                    if (_codex.CheckUsable(forWrite: false) is { } unusable) { return (null, unusable.Message); }
+                    if (_codex.CheckUsable(forWrite: false) is { } unusable) { return (null, "Codex：" + unusable.Message); }
+                    if (!File.Exists(_codex.AuthPath)) { return (null, "Codex 未登录（没有 " + _codex.AuthPath + "）"); }
                     var cli = _codex.ReadCurrent();
-                    return (cli is { HasLogin: true } ? IdOf(cli.ToGrant()) : null, string.Empty);
+                    if (cli is null) { return (null, "Codex：无法读取 " + _codex.AuthPath); }
+                    if (!cli.HasLogin)
+                    {
+                        return (null, string.Equals(cli.AuthMode, "apikey", StringComparison.OrdinalIgnoreCase)
+                            ? "Codex 使用 API Key 登录，不是 ChatGPT 账号"
+                            : "Codex 的 auth.json 里没有 ChatGPT 登录");
+                    }
+
+                    var grant = cli.ToGrant();
+                    var id = IdOf(grant);
+                    if (id is not null) { return (id, string.Empty); }
+                    var email = VaultCredentialMapper.GrantEmail(grant);
+                    return (null, "Codex 当前登录的 " + (email.Length > 0 ? email : "账号") + " 不在列表中");
                 }
                 case SwitchTarget.OpenCode:
                 {
@@ -98,6 +111,15 @@ public sealed class SwitchTargets
     /// <summary>The other programs (not <paramref name="selected"/>) that currently use this account.</summary>
     public async Task<IReadOnlyList<SwitchTarget>> GetOtherUsersAsync(string vaultId, SwitchTarget selected, CancellationToken ct = default)
         => (await GetUsedByOthersAsync(selected, ct).ConfigureAwait(false)).TryGetValue(vaultId, out var list) ? list : Array.Empty<SwitchTarget>();
+
+    /// <summary>
+    /// Before the list is read with Codex selected: Codex's current login (e.g. signed in or refreshed by the desktop app)
+    /// is written back into the vault, and stored as a new account when the vault does not have it, so it can be marked.
+    /// </summary>
+    public void AbsorbCurrent(SwitchTarget target)
+    {
+        if (target == SwitchTarget.Codex) { _dsh.AbsorbCodexCliLogin(_codex); }
+    }
 
     // ------------------------------------------------------------------
     // Switching

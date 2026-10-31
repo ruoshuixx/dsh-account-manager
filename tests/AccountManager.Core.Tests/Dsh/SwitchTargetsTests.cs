@@ -272,6 +272,48 @@ public class SwitchTargetsTests
     }
 
     [Fact]
+    public async Task ReadingWithCodexSelectedAdoptsALoginTheListDoesNotHaveAndMarksIt()
+    {
+        var (f, _, _) = await SetupAsync(SwitchTarget.Codex);
+        using var _f = f;
+        // Signed in in the Codex desktop app with an account the tool never saw.
+        f.UseCli(authJson: DshFixture.AuthJson("c@example.test", "acct-3", "refresh-c"));
+
+        var snapshot = await f.Snapshot.GetSnapshotAsync();
+
+        var current = Assert.Single(snapshot.Accounts, r => r.TargetCurrent);
+        Assert.Equal("acct-3", current.AccountId);
+        Assert.Equal(string.Empty, snapshot.TargetNote);
+    }
+
+    [Fact]
+    public async Task ReadingWithCodexSelectedTakesOverTokensTheDesktopAppRefreshed()
+    {
+        var (f, _, b) = await SetupAsync(SwitchTarget.Codex);
+        using var _f = f;
+        f.UseCli(authJson: DshFixture.AuthJson("b@example.test", "acct-2", "refresh-b-rotated", exp: 4102444900L));
+
+        var snapshot = await f.Snapshot.GetSnapshotAsync();
+
+        Assert.Equal(b, Assert.Single(snapshot.Accounts, r => r.TargetCurrent).CredentialId);
+        Assert.Equal("refresh-b-rotated", VaultCredentialMapper.RefreshOf(f.Vault.FindById(b)!));
+    }
+
+    [Fact]
+    public async Task ACodexWithoutLoginLeavesNoCurrentAccountAndSaysWhy()
+    {
+        var (f, _, _) = await SetupAsync(SwitchTarget.Codex);
+        using var _f = f;
+        f.UseCli();
+
+        var snapshot = await f.Snapshot.GetSnapshotAsync();
+
+        Assert.DoesNotContain(snapshot.Accounts, r => r.TargetCurrent);
+        Assert.Contains("Codex 未登录", snapshot.TargetNote);
+        Assert.Contains("auth.json", snapshot.TargetNote);
+    }
+
+    [Fact]
     public async Task AnUnavailableOpenCodeLeavesNoCurrentAccountAndAnExplainingNote()
     {
         var (f, _, _) = await SetupAsync(SwitchTarget.OpenCode);
