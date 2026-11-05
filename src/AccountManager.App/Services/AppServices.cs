@@ -49,7 +49,7 @@ public sealed class AppServices : IAddAccountServices
         OpenCodeCli = new OpenCodeCli(new OpenCodeCliOptions { CliPath = settings.OpenCodeCliPath }, Secrets, Log);
         var openCodeCredentials = openCodeApi ?? new OpenCodeApi(OpenCodeCli, Secrets);
         OpenCodeAccounts = new OpenCodeAccountStore(openCodeCredentials, Secrets, Log);
-        CodexApi = new CodexApiConfig(CodexCli, Backups);
+        CodexApi = new CodexApiConfig(CodexCli, Backups, Path.Combine(Vault.Directory, "codex-api.json"));
         Share = new ApiShareService(Backend, CodexApi, openCodeCredentials, openCodeConfig ?? new OpenCodeConfigFile(OpenCodeCli), Secrets, Log, Backups);
         Mirror = new DshProfileMirror(() => Backend.Home, Backups, Log);
         Targets = new SwitchTargets(Backend, Vault, CodexCli, OpenCodeAccounts, Secrets, Log, () => Settings.SwitchTarget, CodexApi);

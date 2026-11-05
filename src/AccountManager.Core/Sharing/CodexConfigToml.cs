@@ -4,9 +4,9 @@ using System.Text.RegularExpressions;
 namespace AccountManager.Core.Sharing;
 
 /// <summary>
-/// A minimal line editor for Codex's <c>config.toml</c>. It only ever touches three things: whole
-/// <c>[model_providers.&lt;id&gt;]</c> and <c>[profiles.&lt;id&gt;]</c> tables of the ids it is given, and the top-level
-/// <c>profile</c> key. Every other line, comment and blank line stays exactly as it was.
+/// A minimal line editor for Codex's <c>config.toml</c>. It only ever touches whole <c>[table.&lt;id&gt;]</c> tables of
+/// the ids it is given and the top-level keys it is told about. Every other line, comment and blank line stays exactly
+/// as it was.
 /// </summary>
 public sealed class CodexConfigToml
 {
@@ -14,7 +14,6 @@ public sealed class CodexConfigToml
     public const string ProfilesTable = "profiles";
 
     private static readonly Regex Header = new(@"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$", RegexOptions.Compiled);
-    private static readonly Regex ProfileKey = new(@"^\s*profile\s*=\s*(.*)$", RegexOptions.Compiled);
 
     private readonly List<string> _lines;
     private readonly string _newline;
@@ -29,28 +28,28 @@ public sealed class CodexConfigToml
 
     public override string ToString() => _lines.Count == 0 ? string.Empty : string.Join(_newline, _lines) + _newline;
 
-    /// <summary>The top-level <c>profile</c> value, or null when unset (or not a plain string).</summary>
-    public string? Profile
+    /// <summary>The legacy top-level <c>profile</c> (Codex 0.134+ refuses to start with it).</summary>
+    public string? Profile => GetTop("profile");
+
+    /// <summary>A top-level string value (before the first table), or null when unset or not a plain string.</summary>
+    public string? GetTop(string key)
     {
-        get
-        {
-            var index = ProfileLine();
-            return index < 0 ? null : ParseString(ProfileKey.Match(_lines[index]).Groups[1].Value);
-        }
+        var index = TopLine(key);
+        return index < 0 ? null : ParseString(_lines[index][(_lines[index].IndexOf('=') + 1)..]);
     }
 
-    /// <summary>Sets (or with null removes) the top-level <c>profile</c> key. Returns whether the text changed.</summary>
-    public bool SetProfile(string? name)
+    /// <summary>Sets (or with null removes) a top-level string key. Returns whether the text changed.</summary>
+    public bool SetTop(string key, string? value)
     {
-        var index = ProfileLine();
-        if (name is null)
+        var index = TopLine(key);
+        if (value is null)
         {
             if (index < 0) { return false; }
             _lines.RemoveAt(index);
             return true;
         }
 
-        var line = "profile = " + Quote(name);
+        var line = key + " = " + Quote(value);
         if (index >= 0)
         {
             if (_lines[index] == line) { return false; }
@@ -128,12 +127,13 @@ public sealed class CodexConfigToml
         return block;
     }
 
-    private int ProfileLine()
+    private int TopLine(string key)
     {
+        var pattern = new Regex(@"^\s*" + Regex.Escape(key) + @"\s*=");
         var end = FirstHeader();
         for (var i = 0; i < end; i++)
         {
-            if (ProfileKey.IsMatch(_lines[i])) { return i; }
+            if (pattern.IsMatch(_lines[i])) { return i; }
         }
 
         return -1;

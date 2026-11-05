@@ -40,26 +40,27 @@ public class ApiShareTests
         var toml = new CodexConfigToml(original);
 
         Assert.True(toml.SetTable(CodexConfigToml.ProvidersTable, "api-1", new[] { new KeyValuePair<string, string>("name", "A \"q\" \\ b") }));
-        Assert.True(toml.SetProfile("api-1"));
-        Assert.Equal("api-1", toml.Profile);
+        Assert.True(toml.SetTop("model_provider", "api-1"));
+        Assert.Equal("api-1", toml.GetTop("model_provider"));
         Assert.Equal("A \"q\" \\ b", toml.GetValue(CodexConfigToml.ProvidersTable, "api-1", "name"));
-        Assert.Contains("profile = \"api-1\"\n", toml.ToString());
+        Assert.Contains("model_provider = \"api-1\"\n", toml.ToString());
+        Assert.Equal("gpt-5.5", toml.GetTop("model"));
         Assert.Contains("[mcp_servers.x]\ncommand = \"x\" # keep\n", toml.ToString());
 
         // Same content again: no change.
         Assert.False(toml.SetTable(CodexConfigToml.ProvidersTable, "api-1", new[] { new KeyValuePair<string, string>("name", "A \"q\" \\ b") }));
 
-        Assert.True(toml.SetProfile(null));
+        Assert.True(toml.SetTop("model_provider", null));
         Assert.True(toml.SetTable(CodexConfigToml.ProvidersTable, "api-1", null));
         Assert.Equal(original, toml.ToString());
     }
 
     [Fact]
-    public void AProfileKeyIsInsertedBeforeTheFirstTableEvenInAFileThatStartsWithOne()
+    public void ATopLevelKeyIsInsertedBeforeTheFirstTableEvenInAFileThatStartsWithOne()
     {
         var toml = new CodexConfigToml("[features]\nx = true\n");
-        toml.SetProfile("p");
-        Assert.Equal("profile = \"p\"\n\n[features]\nx = true\n", toml.ToString());
+        toml.SetTop("model_provider", "p");
+        Assert.Equal("model_provider = \"p\"\n\n[features]\nx = true\n", toml.ToString());
     }
 
     // ---- sync -----------------------------------------------------------------
@@ -87,14 +88,15 @@ public class ApiShareTests
         Assert.Equal("fake-key-c", key["value"]!["key"]!.GetValue<string>());
         Assert.True(key["active"]!.GetValue<bool>());
 
-        // Codex: provider + profile for the Responses API only; nothing selected yet.
+        // Codex: a provider table for the Responses API only, no profiles; nothing selected yet.
         var toml = f.CodexApi.Read();
         Assert.Equal("https://ark.example.test/api/v3", toml.GetValue(CodexConfigToml.ProvidersTable, Responses, "base_url"));
         Assert.Equal("responses", toml.GetValue(CodexConfigToml.ProvidersTable, Responses, "wire_api"));
         Assert.Equal("fake-key-r", toml.GetValue(CodexConfigToml.ProvidersTable, Responses, "experimental_bearer_token"));
-        Assert.Equal("m-r1", toml.GetValue(CodexConfigToml.ProfilesTable, Responses, "model"));
+        Assert.False(toml.HasTable("profiles", Responses));
         Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, Chat));
         Assert.Null(toml.Profile);
+        Assert.Null(toml.GetTop("model_provider"));
         Assert.Null(f.CodexApi.CurrentApi());
     }
 
@@ -151,9 +153,8 @@ public class ApiShareTests
         Assert.Contains(f.OpenCodeApi.Credentials, c => c["integrationID"]!.GetValue<string>() == foreign);
         var toml = f.CodexApi.Read();
         Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, Responses));
-        Assert.False(toml.HasTable(CodexConfigToml.ProfilesTable, Responses));
         Assert.True(toml.HasTable(CodexConfigToml.ProvidersTable, foreign));
-        Assert.Null(toml.Profile); // back to the ChatGPT login
+        Assert.Null(toml.GetTop("model_provider")); // back to the ChatGPT login
     }
 
     [Fact]
@@ -201,6 +202,62 @@ public class ApiShareTests
     }
 
     [Fact]
+    public async Task UsingAnApiSetsModelProviderAndModelAndLeavingRestoresTheUsersOwn()
+    {
+        using var f = await SetupAsync();
+        File.WriteAllText(f.CodexConfigPath, "model = \"gpt-6.1-sol\"\nmodel_reasoning_effort = \"high\"\n");
+        await f.Share.SyncAsync(SharedState.Empty);
+
+        Assert.True(f.CodexApi.Use(Responses));
+        var toml = f.CodexApi.Read();
+        Assert.Equal(Responses, toml.GetTop("model_provider"));
+        Assert.Equal("m-r1", toml.GetTop("model"));
+        Assert.Null(toml.Profile); // never the legacy selector
+        Assert.Equal("high", toml.GetTop("model_reasoning_effort"));
+
+        // The user picks another model in Codex; it is remembered for the next time.
+        f.CodexApi.Update(t => t.SetTop("model", "m-r2"));
+        Assert.True(f.CodexApi.LeaveApi());
+        toml = f.CodexApi.Read();
+        Assert.Null(toml.GetTop("model_provider"));
+        Assert.Equal("gpt-6.1-sol", toml.GetTop("model"));
+
+        f.CodexApi.Use(Responses);
+        Assert.Equal("m-r2", f.CodexApi.Read().GetTop("model"));
+    }
+
+    [Fact]
+    public async Task WhatVersion020WroteIsMigratedSoCodexStartsAgain()
+    {
+        using var f = await SetupAsync();
+        var first = await f.Share.SyncAsync(SharedState.Empty);
+        // 0.2.0: a profile table per API and the top-level selector Codex 0.134+ refuses.
+        File.WriteAllText(f.CodexConfigPath, "profile = \"" + Responses + "\"\n\n" + File.ReadAllText(f.CodexConfigPath)
+            + "\n[profiles." + Responses + "]\nmodel_provider = \"" + Responses + "\"\nmodel = \"m-r2\"\n");
+
+        await f.Share.SyncAsync(first.State);
+
+        var toml = f.CodexApi.Read();
+        Assert.Null(toml.Profile);
+        Assert.False(toml.HasTable("profiles", Responses));
+        Assert.Equal(Responses, toml.GetTop("model_provider")); // still on the API it had chosen ...
+        Assert.Equal("m-r2", toml.GetTop("model"));             // ... with its model
+        Assert.True(f.CodexApi.LeaveApi());
+        Assert.Null(f.CodexApi.Read().GetTop("model_provider"));
+    }
+
+    [Fact]
+    public void SwitchingToALoginRemovesALegacyProfileEvenWithoutASync()
+    {
+        using var f = new DshFixture();
+        f.UseCli();
+        File.WriteAllText(f.CodexConfigPath, "profile = \"cockpit-1\"\n\n[model_providers.cockpit-1]\nname = \"x\"\n\n[profiles.cockpit-1]\nmodel_provider = \"cockpit-1\"\n");
+
+        Assert.True(f.CodexApi.LeaveApi());
+        Assert.Null(f.CodexApi.Read().Profile);
+    }
+
+    [Fact]
     public async Task AChatApiCannotBeUsedByCodexAndApisAreNotSwitchedForDsh()
     {
         using var f = await SetupAsync();
@@ -213,6 +270,6 @@ public class ApiShareTests
         f.Target = SwitchTarget.Codex;
         var forCodex = await Assert.ThrowsAsync<DshException>(() => f.Switch.SwitchAsync(chat.CredentialId));
         Assert.Contains("Responses", forCodex.Message);
-        Assert.Null(f.CodexApi.Read().Profile);
+        Assert.Null(f.CodexApi.Read().GetTop("model_provider"));
     }
 }

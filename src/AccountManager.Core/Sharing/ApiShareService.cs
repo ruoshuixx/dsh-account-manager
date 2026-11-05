@@ -152,6 +152,9 @@ public sealed class ApiShareService
         if (!_codex.Available) { return (previous, false); }
         var wanted = apis.Where(a => a.UsesResponses && a.Models.Count > 0 && CodexApiConfig.CanUse(a.Id)).ToList();
         var wantedIds = wanted.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+        var models = wanted.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Models.Select(m => m.Id).ToList(), StringComparer.Ordinal);
+        var ours = previous.Concat(wantedIds).ToHashSet(StringComparer.Ordinal);
+        var state = _codex.LoadState();
         var changed = _codex.Update(toml =>
         {
             var edited = false;
@@ -164,21 +167,18 @@ public sealed class ApiShareService
                     Pair("wire_api", "responses"),
                     Pair("experimental_bearer_token", api.Key),
                 });
-                // Keep the model the user chose in Codex when it is still one of the provider's.
-                var model = toml.GetValue(CodexConfigToml.ProfilesTable, api.Id, "model");
-                if (model is null || api.Models.All(m => m.Id != model)) { model = api.Models[0].Id; }
-                edited |= toml.SetTable(CodexConfigToml.ProfilesTable, api.Id, new[] { Pair("model_provider", api.Id), Pair("model", model) });
             }
 
+            // Also moves Codex off an API that is gone, and drops what 0.2.0 wrote (profile / [profiles.<id>]).
+            edited |= CodexApiConfig.Migrate(toml, ours, models, state);
             foreach (var gone in previous.Where(id => !wantedIds.Contains(id)))
             {
-                if (toml.Profile == gone) { edited |= toml.SetProfile(null); }
                 edited |= toml.SetTable(CodexConfigToml.ProvidersTable, gone, null);
-                edited |= toml.SetTable(CodexConfigToml.ProfilesTable, gone, null);
             }
 
             return edited;
         });
+        _codex.SaveState(state);
         if (changed) { _log?.Info("已把 API 同步到 Codex 的 config.toml（" + wanted.Count + " 个）"); }
         return (wantedIds.ToList(), changed);
     }
