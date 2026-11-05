@@ -5,6 +5,9 @@ namespace AccountManager.Core.Accounts;
 /// <summary>The Codex desktop app keeps its login in memory, so a switch only takes effect after it restarts.</summary>
 public interface ICodexDesktopApp
 {
+    /// <summary>What it is called in messages: the desktop app (Windows) or the background service (Linux).</summary>
+    string Name => "Codex 桌面版";
+
     /// <summary>Whether the desktop app is running (always false where there is no desktop app).</summary>
     bool IsRunning();
 
@@ -15,16 +18,20 @@ public interface ICodexDesktopApp
 /// <summary>
 /// Windows: the Microsoft Store app (package <c>OpenAI.Codex</c>, under <c>WindowsApps</c>) or a window process named
 /// Codex outside an npm install. It is asked to close, then whatever is left of it (its bundled app-server included) is
-/// ended, and it is opened again through its package (Store) or its executable. Other platforms have no desktop app;
-/// the CLI reads auth.json at the start of each session.
+/// ended, and it is opened again through its package (Store) or its executable. Linux has no desktop app; there the
+/// counterpart is Codex's managed app-server daemon (remote control, IDE and SSH clients), restarted with its own
+/// <c>codex app-server daemon restart</c>. CLI sessions read auth.json when they start and are left alone.
 /// </summary>
 public sealed class CodexDesktopApp : ICodexDesktopApp
 {
+    public string Name => OperatingSystem.IsWindows() ? "Codex 桌面版" : "Codex 后台服务";
+
     private const string StorePackage = "OpenAI.Codex";
     private static readonly TimeSpan CloseWait = TimeSpan.FromSeconds(6);
 
     public bool IsRunning()
     {
+        if (OperatingSystem.IsLinux()) { return FindDaemon() is not null; }
         if (!OperatingSystem.IsWindows()) { return false; }
         var found = Find();
         try { return found.Count > 0; }
@@ -33,6 +40,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
 
     public async Task<string> RestartAsync(CancellationToken cancellationToken = default)
     {
+        if (OperatingSystem.IsLinux()) { return await RestartDaemonAsync(cancellationToken).ConfigureAwait(false); }
         if (!OperatingSystem.IsWindows()) { return "这台电脑没有 Codex 桌面版"; }
         var found = Find();
         if (found.Count == 0) { return "Codex 桌面版没有在运行"; }
@@ -80,6 +88,57 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         {
             return "已关闭 Codex 桌面版，但没能重新打开（" + ex.Message + "），请手动打开";
         }
+    }
+
+    /// <summary>Whether a process command line is Codex's managed app-server daemon (not a plain app-server someone started). Public for tests.</summary>
+    public static bool IsManagedDaemon(IReadOnlyList<string> args)
+        => args.Count >= 3
+            && Path.GetFileName(args[0]) == "codex"
+            && args.Contains("app-server")
+            && (args.Contains("--managed-daemon") || args.Contains("daemon"));
+
+    /// <summary>The codex executable of the running managed daemon, or null when none runs.</summary>
+    private static string? FindDaemon()
+    {
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories("/proc"))
+            {
+                if (!int.TryParse(Path.GetFileName(dir), out _)) { continue; }
+                try
+                {
+                    var args = File.ReadAllText(Path.Combine(dir, "cmdline")).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                    if (!IsManagedDaemon(args)) { continue; }
+                    var exe = new FileInfo(Path.Combine(dir, "exe")).ResolveLinkTarget(true)?.FullName ?? args[0];
+                    if (File.Exists(exe)) { return exe; }
+                }
+                catch { /* gone, or another user's process */ }
+            }
+        }
+        catch { /* no /proc */ }
+
+        return null;
+    }
+
+    private static async Task<string> RestartDaemonAsync(CancellationToken cancellationToken)
+    {
+        var exe = FindDaemon();
+        if (exe is null) { return "Codex 后台服务没有在运行"; }
+        var psi = new ProcessStartInfo(exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        foreach (var a in new[] { "app-server", "daemon", "restart" }) { psi.ArgumentList.Add(a); }
+        try
+        {
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 codex");
+            var output = p.StandardOutput.ReadToEndAsync(cancellationToken);
+            var error = p.StandardError.ReadToEndAsync(cancellationToken);
+            await p.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(60), cancellationToken).ConfigureAwait(false);
+            _ = await output.ConfigureAwait(false);
+            var err = (await error.ConfigureAwait(false)).Trim();
+            return p.ExitCode == 0 ? "已重启 Codex 后台服务" : "重启 Codex 后台服务失败（退出码 " + p.ExitCode + (err.Length > 0 ? "：" + err.Split('\n')[^1] : string.Empty) + "）";
+        }
+        catch (TimeoutException) { return "重启 Codex 后台服务超时，请稍后检查"; }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { return "重启 Codex 后台服务失败：" + ex.Message; }
     }
 
     /// <summary>Whether this executable path belongs to the desktop app (not the npm CLI). Public for tests.</summary>

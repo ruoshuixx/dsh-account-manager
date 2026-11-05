@@ -481,7 +481,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         {
             StatusText = row.Title + " 已经是 " + name + " 的当前账号。";
             // Codex desktop may still run with an older login: offer the restart anyway.
-            if (target == SwitchTarget.Codex && interactive) { await OfferCodexRestartAsync(row, "Codex 桌面版需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。"); }
+            if (target == SwitchTarget.Codex && interactive) { await OfferCodexRestartAsync(row, _services.CodexDesktop.Name + "需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。"); }
             return;
         }
 
@@ -512,7 +512,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             if (result.Changed && target == SwitchTarget.Codex && interactive)
             {
                 // Codex desktop only reads the login when it starts.
-                await OfferCodexRestartAsync(row, "Codex 桌面版重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
+                await OfferCodexRestartAsync(row, _services.CodexDesktop.Name + "重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
             }
             if (result.ReauthRequired)
             {
@@ -537,14 +537,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     /// <summary>When the Codex desktop app runs: asks, then closes and reopens it. The status bar says how it went.</summary>
     private async Task OfferCodexRestartAsync(AccountRowViewModel row, string why)
     {
+        var name = _services.CodexDesktop.Name;
         bool running;
         try { running = await Task.Run(_services.CodexDesktop.IsRunning).ConfigureAwait(true); }
-        catch (Exception ex) { _services.Log.Warn("无法检测 Codex 桌面版：" + _services.Secrets.Redact(ex.Message)); return; }
+        catch (Exception ex) { _services.Log.Warn("无法检测" + name + "：" + _services.Secrets.Redact(ex.Message)); return; }
         if (!running) { return; }
-        if (!await _dialogs.ConfirmAsync("重启 Codex 桌面版", why + "\n\n现在关闭并重新打开 Codex 吗？正在进行的对话会被中断。")) { return; }
+        if (!await _dialogs.ConfirmAsync("重启 " + name, why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
 
         var status = StatusText;
-        StatusText = "正在重启 Codex 桌面版 …";
+        StatusText = "正在重启" + name + " …";
         try
         {
             var restarted = await _services.CodexDesktop.RestartAsync().ConfigureAwait(true);
@@ -554,7 +555,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         }
         catch (Exception ex)
         {
-            StatusText = "重启 Codex 桌面版失败：" + _services.Secrets.Redact(ex.Message);
+            StatusText = "重启" + name + "失败：" + _services.Secrets.Redact(ex.Message);
         }
     }
 

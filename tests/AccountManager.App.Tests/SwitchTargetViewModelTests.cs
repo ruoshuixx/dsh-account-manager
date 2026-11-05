@@ -257,7 +257,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
 
         await vm.SwitchAsync(Row(vm, b));
 
-        Assert.StartsWith("重启 Codex 桌面版", Assert.Single(dialogs.Confirms));
+        Assert.StartsWith("重启 Codex 测试版", Assert.Single(dialogs.Confirms));
         Assert.Contains("refresh-b", File.ReadAllText(CodexAuth)); // switched either way
         Assert.Equal(restart ? 1 : 0, _desktop.Restarts);
         Assert.Contains(restart ? "已重启 Codex 桌面版" : "重启后才生效", vm.StatusText);
@@ -278,7 +278,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
 
         await vm.SwitchAsync(Row(vm, b));
 
-        Assert.StartsWith("重启 Codex 桌面版", Assert.Single(dialogs.Confirms));
+        Assert.StartsWith("重启 Codex 测试版", Assert.Single(dialogs.Confirms));
         Assert.Equal(1, _desktop.Restarts);
         Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth)); // nothing switched
         Assert.Contains("已重启 Codex 桌面版", vm.StatusText);
@@ -369,6 +369,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
 
     private sealed class FakeCodexDesktop : ICodexDesktopApp
     {
+        public string Name => "Codex 测试版";
         public bool Running { get; set; }
         public int Restarts { get; private set; }
         public bool IsRunning() => Running;

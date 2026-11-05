@@ -16,10 +16,16 @@ public class CodexDesktopAppTests
     public void OnlyTheDesktopAppIsRestarted(string path, bool hasWindow, bool expected)
         => Assert.Equal(expected, CodexDesktopApp.IsDesktopPath(path, hasWindow));
 
+    [Theory]
+    [InlineData("/home/u/.codex/packages/app-server-daemon/releases/0.166.0/bin/codex|app-server|--listen|unix://|--managed-daemon", true)]
+    [InlineData("/home/u/.codex/packages/app-server-daemon/releases/0.166.0/bin/codex|app-server|daemon|pid-update-loop", true)]
+    [InlineData("/usr/bin/codex|app-server|--listen|ws://127.0.0.1:18771", false)]
+    [InlineData("/usr/bin/codex|exec|-m|gpt-6-astra", false)]
+    [InlineData("/usr/bin/node|app-server|daemon", false)]
+    public void OnLinuxOnlyCodexsManagedDaemonIsRestarted(string cmdline, bool expected)
+        => Assert.Equal(expected, CodexDesktopApp.IsManagedDaemon(cmdline.Split('|')));
+
     [Fact]
-    public void OffWindowsThereIsNoDesktopAppToRestart()
-    {
-        if (OperatingSystem.IsWindows()) { return; }
-        Assert.False(new CodexDesktopApp().IsRunning());
-    }
+    public void TheNameSaysWhatIsRestarted()
+        => Assert.Equal(OperatingSystem.IsWindows() ? "Codex 桌面版" : "Codex 后台服务", new CodexDesktopApp().Name);
 }
