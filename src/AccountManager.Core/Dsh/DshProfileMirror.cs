@@ -19,6 +19,9 @@ public sealed class DshProfileMirror
 {
     public static readonly string[] ClientProfiles = { "desktop", "tauri", "cli" };
 
+    private const string DefaultModelId = "agent-default-model";
+    private const string DefaultModelPackage = "@deepseek-ai/dsh-agent-default-model";
+
     private readonly Func<DshHome> _home;
     private readonly BackupService? _backups;
     private readonly AppLog? _log;
@@ -39,7 +42,13 @@ public sealed class DshProfileMirror
         if (!File.Exists(home.PatchPath)) { return new ProfileMirrorResult(previous, notes, false); }
 
         JsonObject providers;
-        try { providers = ProfilePatchDocument.Load(home.PatchPath).GetProviders() ?? new JsonObject(); }
+        JsonObject? defaultModel;
+        try
+        {
+            var source = ProfilePatchDocument.Load(home.PatchPath);
+            providers = source.GetProviders() ?? new JsonObject();
+            defaultModel = source.GetEntryById(DefaultModelId)?["config"] as JsonObject;
+        }
         catch (Exception ex)
         {
             notes.Add("读取 dsh 档案 " + home.Profile + " 的供应商失败，未同步到其它档案：" + ex.Message);
@@ -60,6 +69,7 @@ public sealed class DshProfileMirror
             var before = previous.TryGetValue(profile, out var ids) ? ids : Array.Empty<string>();
             var gone = before.Where(id => !wanted.ContainsKey(id)).ToList();
             var path = Path.Combine(dir, DshHome.PatchFileName);
+            var copiedDefault = false;
             try
             {
                 var wrote = ProfilePatchDocument.Update(path, doc =>
@@ -73,6 +83,12 @@ public sealed class DshProfileMirror
                     }
 
                     foreach (var id in gone.Where(current.ContainsKey)) { edited |= doc.SetProvider(id, null); }
+                    if (DefaultFor(defaultModel, wanted) is { } selection && !HasSelection(doc))
+                    {
+                        edited |= doc.AddEntry(new JsonObject { ["id"] = DefaultModelId, ["name"] = DefaultModelPackage, ["config"] = selection });
+                        copiedDefault = true;
+                    }
+
                     if (edited && File.Exists(path)) { _backups?.Save(Array.Empty<JsonNode?>(), path, File.ReadAllText(path)); }
                     return edited;
                 });
@@ -80,6 +96,7 @@ public sealed class DshProfileMirror
                 {
                     changed = true;
                     _log?.Info("已把 dsh 供应商同步到档案 " + profile + "（" + wanted.Count + " 个" + (gone.Count > 0 ? "，移除 " + gone.Count + " 个" : string.Empty) + "）"
+                        + (copiedDefault ? "，并设好默认模型" : string.Empty)
                         + (hasFast ? string.Empty : "；该档案没有 Fast 组件，未带 Fast 模型") + "。");
                 }
 
@@ -101,6 +118,32 @@ public sealed class DshProfileMirror
             .Where(p => !string.Equals(p, home.Profile, StringComparison.Ordinal)
                 && File.Exists(Path.Combine(home.ProfilesDirectory, p, "package.json")))
             .ToList();
+
+    /// <summary>Whether the profile already has its own default model (the CLI's /model saves one); that is never replaced.</summary>
+    private static bool HasSelection(ProfilePatchDocument doc)
+        => doc.GetEntryById(DefaultModelId)?["config"] is JsonObject c
+            && (c["provider"] is JsonValue || c["model"] is JsonValue);
+
+    /// <summary>
+    /// The source profile's default model as it can be used in the target: its provider must have been copied and list
+    /// the model; a Fast twin that was left out falls back to its base model.
+    /// </summary>
+    private static JsonObject? DefaultFor(JsonObject? source, JsonObject wanted)
+    {
+        if (source?["provider"] is not JsonValue pv || !pv.TryGetValue<string>(out var provider)) { return null; }
+        if (source["model"] is not JsonValue mv || !mv.TryGetValue<string>(out var model)) { return null; }
+        if (wanted[provider] is not JsonObject target) { return null; }
+        if (target["models"] is JsonArray models)
+        {
+            var ids = models.Select(m => m is JsonObject o ? o["id"]?.GetValue<string>() : m is JsonValue v && v.TryGetValue<string>(out var s) ? s : null).ToHashSet(StringComparer.Ordinal);
+            if (!ids.Contains(model) && model.EndsWith("-fast", StringComparison.Ordinal) && ids.Contains(model[..^"-fast".Length])) { model = model[..^"-fast".Length]; }
+            if (!ids.Contains(model)) { return null; }
+        }
+
+        var selection = new JsonObject { ["provider"] = provider, ["model"] = model };
+        if (source["reasoningEffort"] is JsonValue effort) { selection["reasoningEffort"] = effort.DeepClone(); }
+        return selection;
+    }
 
     private static bool HasFastComponent(string profileDirectory)
     {

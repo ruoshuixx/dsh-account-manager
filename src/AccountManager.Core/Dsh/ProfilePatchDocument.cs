@@ -65,6 +65,52 @@ public sealed partial class ProfilePatchDocument
         return (json?["config"] as JsonObject)?["providers"] is JsonObject providers ? (JsonObject)providers.DeepClone() : null;
     }
 
+    /// <summary>A clone of the first entry with this <c>id</c>, or null.</summary>
+    public JsonObject? GetEntryById(string id)
+    {
+        var root = YamlTree.Parse(_text, What);
+        if (root is null || root.IsEmptyScalar || root.Kind != YKind.Seq) { return null; }
+        foreach (var item in root.Items)
+        {
+            if (item.Kind != YKind.Map) { continue; }
+            var entry = item.Entries.FirstOrDefault(e => e.Key.Value == "id");
+            if (entry is { Value.Kind: YKind.Scalar } && entry.Value.Value == id) { return YamlTree.ToJson(item, What) as JsonObject; }
+        }
+
+        return null;
+    }
+
+    /// <summary>Appends a new entry at the end of the list (the file is re-rendered only when it is a flow list). Returns whether the text changed.</summary>
+    public bool AddEntry(JsonObject entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        var nl = YamlText.DetectNewline(_text);
+        var root = YamlTree.Parse(_text, What);
+        string next;
+        if (root is null || root.IsEmptyScalar)
+        {
+            var prefix = _text.Length > 0 && _text[^1] != '\n' ? nl : string.Empty;
+            next = _text + prefix + YamlText.RenderSeqItem(entry, 0, nl) + nl;
+        }
+        else if (root.Kind != YKind.Seq) { throw new DshFormatException(What + " must be a YAML sequence of plugin entries"); }
+        else if (root.Flow)
+        {
+            var all = (JsonArray)YamlTree.ToJson(root, What)!;
+            all.Add(entry.DeepClone());
+            var sb = new StringBuilder();
+            foreach (var n in all) { sb.Append(YamlText.RenderSeqItem(n, 0, nl)).Append(nl); }
+            next = sb.ToString();
+        }
+        else
+        {
+            var indent = YamlText.Column(_text, root.Start);
+            var after = YamlText.LineEnd(_text, root.End);
+            next = _text.Insert(after, nl + new string(' ', indent) + YamlText.RenderSeqItem(entry, indent, nl));
+        }
+
+        return Commit(next);
+    }
+
     /// <summary>A clone of the whole <c>llm-pi-ai</c> entry, or null.</summary>
     public JsonObject? GetEntry()
     {

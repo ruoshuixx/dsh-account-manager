@@ -90,6 +90,47 @@ public sealed class DshProfileMirrorTests : IDisposable
         Assert.True(left.ContainsKey("mine"));
     }
 
+    private static void SetDefault(string profileDir, string provider, string model)
+        => ProfilePatchDocument.Update(Path.Combine(profileDir, DshHome.PatchFileName), d => d.AddEntry(new JsonObject
+        {
+            ["id"] = "agent-default-model", ["name"] = "@deepseek-ai/dsh-agent-default-model",
+            ["config"] = new JsonObject { ["provider"] = provider, ["model"] = model, ["reasoningEffort"] = "high" },
+        }));
+
+    private static JsonObject? Default(string profileDir)
+        => ProfilePatchDocument.Load(Path.Combine(profileDir, DshHome.PatchFileName)).GetEntryById("agent-default-model")?["config"] as JsonObject;
+
+    [Fact]
+    public void ACliWithoutADefaultModelGetsTheDesktopOneAndAFastTwinFallsBackToItsBase()
+    {
+        var tauri = Profile("tauri", fast: true);
+        var cli = Profile("cli");
+        Set(tauri, "openai-codex", Provider("https://chatgpt.example.test", "gpt-a", "gpt-a-fast"));
+        SetDefault(tauri, "openai-codex", "gpt-a-fast");
+
+        Mirror().Sync(new Dictionary<string, IReadOnlyList<string>>());
+
+        var selection = Default(cli)!;
+        Assert.Equal("openai-codex", selection["provider"]!.GetValue<string>());
+        Assert.Equal("gpt-a", selection["model"]!.GetValue<string>());
+        Assert.Equal("high", selection["reasoningEffort"]!.GetValue<string>());
+        Assert.Equal("@deepseek-ai/dsh-agent-default-model", ProfilePatchDocument.Load(Path.Combine(cli, DshHome.PatchFileName)).GetEntryById("agent-default-model")!["name"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void TheCliKeepsTheDefaultModelItPickedItself()
+    {
+        var tauri = Profile("tauri");
+        var cli = Profile("cli");
+        Set(tauri, "openai-codex", Provider("https://chatgpt.example.test", "gpt-a", "gpt-b"));
+        SetDefault(tauri, "openai-codex", "gpt-a");
+        SetDefault(cli, "openai-codex", "gpt-b");
+
+        Mirror().Sync(new Dictionary<string, IReadOnlyList<string>>());
+
+        Assert.Equal("gpt-b", Default(cli)!["model"]!.GetValue<string>());
+    }
+
     [Fact]
     public void AnUninitializedOrMissingCliProfileIsLeftAlone()
     {
