@@ -264,6 +264,32 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task ClickingTheCurrentCodexAccountStillOffersTheRestart()
+    {
+        var (services, vm, dialogs) = NewVm(confirm: true);
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddAsync(services, "b@example.test", "acct-2", "refresh-b", activate: false);
+        WriteCodexLogin("b@example.test", "acct-2", "refresh-b");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        Assert.True(Row(vm, b).IsCurrent);
+        var authBefore = File.ReadAllBytes(CodexAuth);
+        _desktop.Running = true;
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.StartsWith("重启 Codex 桌面版", Assert.Single(dialogs.Confirms));
+        Assert.Equal(1, _desktop.Restarts);
+        Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth)); // nothing switched
+        Assert.Contains("已重启 Codex 桌面版", vm.StatusText);
+
+        _desktop.Running = false; // not running: just says it is current
+        await vm.SwitchAsync(Row(vm, b));
+        Assert.Single(dialogs.Confirms);
+        Assert.Contains("已经是 Codex 的当前账号", vm.StatusText);
+    }
+
+    [AvaloniaFact]
     public async Task WithoutARunningDesktopAppTheCodexSwitchDoesNotAsk()
     {
         var (services, vm, dialogs) = NewVm();

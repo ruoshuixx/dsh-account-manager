@@ -480,6 +480,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         if (row.IsCurrent)
         {
             StatusText = row.Title + " 已经是 " + name + " 的当前账号。";
+            // Codex desktop may still run with an older login: offer the restart anyway.
+            if (target == SwitchTarget.Codex && interactive) { await OfferCodexRestartAsync(row, "Codex 桌面版需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。"); }
             return;
         }
 
@@ -506,19 +508,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
             var result = await Task.Run(() => _services.SwitchAsync(row.Row.CredentialId)).ConfigureAwait(true);
             StatusText = result.Changed ? "已切换 " + name + " 账号：" + result.Label : result.Label + " 已是 " + name + " 的当前账号。";
-            if (result.Changed && target == SwitchTarget.Codex && interactive && await Task.Run(_services.CodexDesktop.IsRunning).ConfigureAwait(true))
+            if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
+            if (result.Changed && target == SwitchTarget.Codex && interactive)
             {
                 // Codex desktop only reads the login when it starts.
-                if (await _dialogs.ConfirmAsync("重启 Codex 桌面版", "Codex 桌面版重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。\n\n现在关闭并重新打开 Codex 吗？正在进行的对话会被中断。"))
-                {
-                    StatusText = "正在重启 Codex 桌面版 …";
-                    var restarted = await _services.CodexDesktop.RestartAsync().ConfigureAwait(true);
-                    _services.Log.Info(restarted);
-                    StatusText = "已切换 " + name + " 账号：" + result.Label + " · " + restarted;
-                }
-                else if (result.Note.Length > 0) { StatusText += " · " + result.Note; }
+                await OfferCodexRestartAsync(row, "Codex 桌面版重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
             }
-            else if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
             if (result.ReauthRequired)
             {
                 await _dialogs.ShowWarningAsync("需要重新登录", "该账号的访问令牌已过期：切号只把它写给 " + name + "，不会自动刷新登录。请先重新授权该账号。");
@@ -537,6 +532,30 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         var status = StatusText;
         await ReadDshAsync();
         if (!string.IsNullOrEmpty(status) && StatusText.StartsWith("已读取", StringComparison.Ordinal)) { StatusText = status; }
+    }
+
+    /// <summary>When the Codex desktop app runs: asks, then closes and reopens it. The status bar says how it went.</summary>
+    private async Task OfferCodexRestartAsync(AccountRowViewModel row, string why)
+    {
+        bool running;
+        try { running = await Task.Run(_services.CodexDesktop.IsRunning).ConfigureAwait(true); }
+        catch (Exception ex) { _services.Log.Warn("无法检测 Codex 桌面版：" + _services.Secrets.Redact(ex.Message)); return; }
+        if (!running) { return; }
+        if (!await _dialogs.ConfirmAsync("重启 Codex 桌面版", why + "\n\n现在关闭并重新打开 Codex 吗？正在进行的对话会被中断。")) { return; }
+
+        var status = StatusText;
+        StatusText = "正在重启 Codex 桌面版 …";
+        try
+        {
+            var restarted = await _services.CodexDesktop.RestartAsync().ConfigureAwait(true);
+            _services.Log.Info(restarted);
+            // Drop the "restart needed" hint the switch added, it is done now.
+            StatusText = status.Split(" · ")[0] + " · " + restarted;
+        }
+        catch (Exception ex)
+        {
+            StatusText = "重启 Codex 桌面版失败：" + _services.Secrets.Redact(ex.Message);
+        }
     }
 
     private static string OtherNames(IEnumerable<SwitchTarget> targets) => string.Join("、", targets.Select(t => t.Display()));
