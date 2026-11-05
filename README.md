@@ -67,8 +67,10 @@
 |---|---|---|---|
 | Windows | 官方 DeepSeek Harness 桌面版 | `%USERPROFILE%\.dsh`（或环境变量 `DSH_HOME`） | `profiles/desktop` |
 | Ubuntu | dsh-tauri | `~/.dsh`（或环境变量 `DSH_HOME`） | `profiles/tauri` |
+| Windows / Ubuntu | dsh 命令行（`dsh --profile cli`、`deepseek`） | 同上 | `profiles/cli` |
 
 配置档案自动检测：依次取 `desktop`，`tauri`，再取 `profiles/` 下按名称排序的第一个其它目录；也可以在「设置」里手动指定 **DSH 主目录** 和 **配置档案**（留空 = 自动）。
+凭据文件是所有档案共用的，切号对桌面版和命令行同时生效。每次读取后，本工具管理的档案里的供应商（Codex 路由和 API）会同步到其它已初始化的客户端档案（如 `cli`）：只覆盖同名供应商，你只在那边加的保持不动；那边没装 Fast 组件时不带 `-fast` 模型。
 Ubuntu 版在 Ubuntu 桌面上使用过；Windows 版已在真机上验证过导入和切号，其它场景欢迎反馈。
 
 ## 下载与安装

@@ -23,6 +23,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "dshT-" + Guid.NewGuid().ToString("N")[..10]);
     private readonly FakeOpenCode _openCode = new();
+    private readonly FakeCodexDesktop _desktop = new();
     private readonly string _settingsPath;
 
     public SwitchTargetViewModelTests()
@@ -54,7 +55,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         settings.CodexHome = CodexHome;
         var secrets = new SecretRegistry(false);
         return new AppServices(settings, Path.Combine(_root, "app"), new AppLog(secrets, Path.Combine(_root, "logs")), null, _openCode,
-            new AccountVault(Path.Combine(_root, "app"), Protect, Unprotect), new BackupService(Path.Combine(_root, "backups"), Protect, Unprotect));
+            new AccountVault(Path.Combine(_root, "app"), Protect, Unprotect), new BackupService(Path.Combine(_root, "backups"), Protect, Unprotect), codexDesktop: _desktop);
     }
 
     /// <summary>A view model on dsh as the target: accounts are seeded first, then a test selects its target.</summary>
@@ -241,6 +242,43 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         Assert.True(Row(vm, a).IsCurrent);
     }
 
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ACodexSwitchOffersToRestartTheRunningDesktopApp(bool restart)
+    {
+        var (services, vm, dialogs) = NewVm(confirm: restart);
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddAsync(services, "b@example.test", "acct-2", "refresh-b", activate: false);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        _desktop.Running = true;
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.StartsWith("重启 Codex 桌面版", Assert.Single(dialogs.Confirms));
+        Assert.Contains("refresh-b", File.ReadAllText(CodexAuth)); // switched either way
+        Assert.Equal(restart ? 1 : 0, _desktop.Restarts);
+        Assert.Contains(restart ? "已重启 Codex 桌面版" : "重启后才生效", vm.StatusText);
+    }
+
+    [AvaloniaFact]
+    public async Task WithoutARunningDesktopAppTheCodexSwitchDoesNotAsk()
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddAsync(services, "b@example.test", "acct-2", "refresh-b", activate: false);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.Empty(dialogs.Confirms);
+        Assert.Equal(0, _desktop.Restarts);
+    }
+
     [AvaloniaFact]
     public async Task AnAccountNobodyElseUsesIsSwitchedWithoutAsking()
     {
@@ -302,6 +340,14 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     // ---- fakes ------------------------------------------------------------------
+
+    private sealed class FakeCodexDesktop : ICodexDesktopApp
+    {
+        public bool Running { get; set; }
+        public int Restarts { get; private set; }
+        public bool IsRunning() => Running;
+        public Task<string> RestartAsync(CancellationToken cancellationToken = default) { Restarts++; return Task.FromResult("已重启 Codex 桌面版"); }
+    }
 
     private sealed class ScriptedDialogs : IDialogService
     {

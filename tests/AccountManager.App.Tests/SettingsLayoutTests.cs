@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
 using Avalonia.Headless.XUnit;
 using Xunit;
@@ -63,6 +64,18 @@ public class SettingsLayoutTests
             Assert.True(scroll.Offset.Y > 0);
         }
         finally { dialog.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void SyncComesRightAfterAutoRefresh()
+    {
+        var dialog = new SettingsDialog();
+        var panel = (StackPanel)dialog.GetLogicalDescendants().OfType<ScrollViewer>().Single().Content!;
+        var headings = panel.Children.OfType<StackPanel>()
+            .Select(p => p.Children.OfType<TextBlock>().FirstOrDefault()?.Text)
+            .Where(t => t is not null)
+            .ToList();
+        Assert.Equal(new[] { "自动刷新（分钟）", "WebDAV 同步", "DSH 主目录" }, headings.Take(3));
     }
 
     [AvaloniaFact]

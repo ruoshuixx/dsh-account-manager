@@ -36,6 +36,9 @@ public sealed class AppSettings
     /// <summary>API provider ids this tool wrote into Codex's config.toml (same rule).</summary>
     public List<string> SharedCodexApis { get; set; } = new();
 
+    /// <summary>dsh provider ids this tool copied into other dsh profiles (e.g. the CLI's <c>cli</c>), per profile; same rule.</summary>
+    public Dictionary<string, List<string>> MirroredDshProviders { get; set; } = new();
+
     public int AutoRefreshMinutes { get; set; } = 5;
 
     /// <summary>When true, low quota on the active Codex account triggers polling and an automatic switch.</summary>

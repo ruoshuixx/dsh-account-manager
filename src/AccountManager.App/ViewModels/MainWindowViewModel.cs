@@ -506,7 +506,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
             var result = await Task.Run(() => _services.SwitchAsync(row.Row.CredentialId)).ConfigureAwait(true);
             StatusText = result.Changed ? "已切换 " + name + " 账号：" + result.Label : result.Label + " 已是 " + name + " 的当前账号。";
-            if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
+            if (result.Changed && target == SwitchTarget.Codex && interactive && await Task.Run(_services.CodexDesktop.IsRunning).ConfigureAwait(true))
+            {
+                // Codex desktop only reads the login when it starts.
+                if (await _dialogs.ConfirmAsync("重启 Codex 桌面版", "Codex 桌面版重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。\n\n现在关闭并重新打开 Codex 吗？正在进行的对话会被中断。"))
+                {
+                    StatusText = "正在重启 Codex 桌面版 …";
+                    var restarted = await _services.CodexDesktop.RestartAsync().ConfigureAwait(true);
+                    _services.Log.Info(restarted);
+                    StatusText = "已切换 " + name + " 账号：" + result.Label + " · " + restarted;
+                }
+                else if (result.Note.Length > 0) { StatusText += " · " + result.Note; }
+            }
+            else if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
             if (result.ReauthRequired)
             {
                 await _dialogs.ShowWarningAsync("需要重新登录", "该账号的访问令牌已过期：切号只把它写给 " + name + "，不会自动刷新登录。请先重新授权该账号。");

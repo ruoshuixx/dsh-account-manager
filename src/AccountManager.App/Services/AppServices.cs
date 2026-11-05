@@ -28,9 +28,10 @@ public sealed class AppServices : IAddAccountServices
     /// <param name="openCodeApi">Test seam: stands in for the OpenCode CLI, so no real OpenCode is ever run.</param>
     /// <param name="vault">Test seam: a vault with its own encryption, so no real key store is used.</param>
     /// <param name="backups">Test seam: a backup service with its own encryption.</param>
-    public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null, IOpenCodeCredentialApi? openCodeApi = null, AccountVault? vault = null, BackupService? backups = null, IOpenCodeConfigFile? openCodeConfig = null)
+    public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null, IOpenCodeCredentialApi? openCodeApi = null, AccountVault? vault = null, BackupService? backups = null, IOpenCodeConfigFile? openCodeConfig = null, ICodexDesktopApp? codexDesktop = null)
     {
         Settings = settings;
+        CodexDesktop = codexDesktop ?? new CodexDesktopApp();
         Secrets = new SecretRegistry();
         LogDirectory = PortablePaths.Logs;
         Log = log ?? new AppLog(Secrets, LogDirectory);
@@ -50,6 +51,7 @@ public sealed class AppServices : IAddAccountServices
         OpenCodeAccounts = new OpenCodeAccountStore(openCodeCredentials, Secrets, Log);
         CodexApi = new CodexApiConfig(CodexCli, Backups);
         Share = new ApiShareService(Backend, CodexApi, openCodeCredentials, openCodeConfig ?? new OpenCodeConfigFile(OpenCodeCli), Secrets, Log, Backups);
+        Mirror = new DshProfileMirror(() => Backend.Home, Backups, Log);
         Targets = new SwitchTargets(Backend, Vault, CodexCli, OpenCodeAccounts, Secrets, Log, () => Settings.SwitchTarget, CodexApi);
         Backend.TargetRefresher = Targets.RefreshIfCurrentAsync;
         References = new ReferenceService(Backend, Verifier, Backups, Secrets, Log);
@@ -109,8 +111,20 @@ public sealed class AppServices : IAddAccountServices
         var result = await Share.SyncAsync(previous, ct).ConfigureAwait(false);
         Settings.SharedOpenCodeApis = result.State.OpenCode.ToList();
         Settings.SharedCodexApis = result.State.Codex.ToList();
-        return result;
+
+        // The dsh CLI's own profile gets the same providers as the desktop profile.
+        var mirrored = Mirror.Sync(Settings.MirroredDshProviders.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.Ordinal));
+        Settings.MirroredDshProviders = mirrored.State.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), StringComparer.Ordinal);
+        return mirrored.Notes.Count == 0 && !mirrored.Changed
+            ? result
+            : result with { Notes = result.Notes.Concat(mirrored.Notes).ToList(), Changed = result.Changed || mirrored.Changed };
     }
+
+    /// <summary>The Codex desktop app, restarted on request after a Codex switch.</summary>
+    public ICodexDesktopApp CodexDesktop { get; }
+
+    /// <summary>Copies dsh's providers into the other client profiles (desktop / tauri / cli).</summary>
+    public DshProfileMirror Mirror { get; }
 
     /// <summary>dsh, Codex and OpenCode as switch targets.</summary>
     public SwitchTargets Targets { get; }
@@ -164,7 +178,15 @@ public sealed class AppServices : IAddAccountServices
     public void ApplyOpenCodeCliPath() => OpenCodeCli.SetCliPath(Settings.OpenCodeCliPath);
 
     /// <summary>The status line shown next to the read button.</summary>
-    public string DshStatus => "DSH：" + Home.Root + " · 档案 " + Home.Profile + (Home.ProfileExists ? string.Empty : "（未找到）");
+    public string DshStatus
+    {
+        get
+        {
+            var mirrors = DshProfileMirror.Targets(Home);
+            return "DSH：" + Home.Root + " · 档案 " + Home.Profile + (Home.ProfileExists ? string.Empty : "（未找到）")
+                + (mirrors.Count == 0 ? string.Empty : "（供应商同步到 " + string.Join("、", mirrors) + "）");
+        }
+    }
 
     // ---- WebDAV sync (manual upload / download) ----------------------------
 
