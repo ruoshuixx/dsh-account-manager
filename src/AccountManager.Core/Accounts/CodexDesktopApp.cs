@@ -146,7 +146,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
 
     private static bool IsExecutable(string path)
     {
-        try { return (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) != 0; }
+        try { return !OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) != 0; }
         catch { return false; }
     }
 

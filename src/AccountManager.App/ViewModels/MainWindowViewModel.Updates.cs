@@ -10,7 +10,7 @@ namespace AccountManager.App.ViewModels;
 public sealed partial class MainWindowViewModel
 {
     // Dedicated public-download client: never shares account requests or authorization headers.
-    private static readonly HttpClient UpdateHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly HttpClient UpdateHttp = new(new HttpClientHandler { Proxy = AccountManager.Core.Net.SystemProxy.Instance, UseProxy = true }) { Timeout = Timeout.InfiniteTimeSpan };
     private readonly GitHubUpdateService _updates = new(UpdateHttp, AppUpdateInfo.Owner, AppUpdateInfo.Repository, CurrentUpdatePlatform());
     private UpdateRelease? _availableUpdate;
     private CancellationTokenSource? _updateCancellation;

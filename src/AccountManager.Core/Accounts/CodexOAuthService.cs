@@ -1,4 +1,5 @@
 using System.Net;
+using AccountManager.Core.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -30,7 +31,7 @@ public sealed class CodexOAuthService : IDisposable
     {
         _secrets = secrets;
         var handler = new HttpClientHandler { AllowAutoRedirect = false, UseProxy = useProxy };
-        if (useProxy && !string.IsNullOrWhiteSpace(proxyUrl)) { handler.Proxy = new WebProxy(proxyUrl); }
+        if (useProxy) { handler.Proxy = string.IsNullOrWhiteSpace(proxyUrl) ? SystemProxy.Instance : new WebProxy(proxyUrl); }
         _client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         _ownsClient = true;
     }

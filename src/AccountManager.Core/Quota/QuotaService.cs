@@ -1,4 +1,5 @@
 using System.Globalization;
+using AccountManager.Core.Net;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json.Nodes;
@@ -21,12 +22,8 @@ public class QuotaService
 
     private static HttpClient CreateClient()
     {
-        var handler = new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-        };
-        return new HttpClient(handler);
+        // The system proxy as it is set now (not only the environment variables .NET reads).
+        return new HttpClient(SystemProxy.Handler());
     }
 
     public virtual async Task<QuotaUsage> GetQuotaAsync(string accessToken, string accountId, CancellationToken cancellationToken = default)

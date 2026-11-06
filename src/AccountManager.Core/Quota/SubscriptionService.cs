@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AccountManager.Core.Net;
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
@@ -69,12 +70,8 @@ public class SubscriptionService
 
     private static HttpClient CreateClient()
     {
-        var handler = new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-        };
-        return new HttpClient(handler);
+        // The system proxy as it is set now (not only the environment variables .NET reads).
+        return new HttpClient(SystemProxy.Handler());
     }
 
     public virtual async Task<SubscriptionStatus> GetSubscriptionAsync(string accessToken, string accountId, CancellationToken cancellationToken = default)
@@ -428,22 +425,7 @@ public class SubscriptionService
         return (int.TryParse(codeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code) ? code : 0, body);
     }
 
-    private static string? ResolveProxy(string url)
-    {
-        try
-        {
-            var proxy = HttpClient.DefaultProxy;
-            if (proxy is null) { return null; }
-            var request = new Uri(url);
-            var resolved = proxy.GetProxy(request);
-            if (resolved is null || resolved == request) { return null; }
-            return resolved.ToString();
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private static string? ResolveProxy(string url) => SystemProxy.For(url);
 
     /// <summary>
     /// OS-parameterised discovery. Windows prefers <paramref name="systemDirectory"/>\curl.exe then

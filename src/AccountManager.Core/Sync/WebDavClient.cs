@@ -1,4 +1,5 @@
 using System.Globalization;
+using AccountManager.Core.Net;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -86,7 +87,7 @@ public sealed class WebDavClient
         _timeoutMs = options.TimeoutMs > 0 ? options.TimeoutMs : 30000;
         _maxDownloadBytes = options.MaxDownloadBytes > 0 ? options.MaxDownloadBytes : 20L * 1024 * 1024;
         _auth = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(options.Username + ":" + options.Password)));
-        _http = http ?? new HttpClient();
+        _http = http ?? new HttpClient(new HttpClientHandler { Proxy = SystemProxy.Instance, UseProxy = true });
     }
 
     /// <summary>True when the configured base URL uses HTTPS.</summary>

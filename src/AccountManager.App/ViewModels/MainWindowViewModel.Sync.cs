@@ -14,7 +14,7 @@ namespace AccountManager.App.ViewModels;
 /// </summary>
 public sealed partial class MainWindowViewModel
 {
-    private static readonly HttpClient SyncHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly HttpClient SyncHttp = new(new HttpClientHandler { Proxy = AccountManager.Core.Net.SystemProxy.Instance, UseProxy = true }) { Timeout = Timeout.InfiniteTimeSpan };
 
     [RelayCommand]
     private async Task SyncUploadAsync()
