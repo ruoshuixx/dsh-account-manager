@@ -13,6 +13,9 @@ public interface ICodexDesktopApp
 
     /// <summary>Quits every process of the app and opens it again. Returns a short result for the status bar.</summary>
     Task<string> RestartAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>For the log when nothing was found: the processes that look like Codex / ChatGPT and their paths.</summary>
+    string Describe() => string.Empty;
 }
 
 /// <summary>
@@ -31,7 +34,8 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
 
     public string Name => OperatingSystem.IsLinux() && LinuxDesktop().Executables.Count == 0 ? "Codex 后台服务" : "Codex 桌面版";
 
-    private const string StorePackage = "OpenAI.Codex";
+    /// <summary>Store packages are OpenAI.* (the Codex app was OpenAI.Codex; it is being rebranded as ChatGPT with Codex).</summary>
+    private const string StorePublisherPrefix = "OpenAI.";
     private static readonly TimeSpan CloseWait = TimeSpan.FromSeconds(6);
 
     public bool IsRunning()
@@ -280,16 +284,42 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
             && path.IndexOf("node_modules", StringComparison.OrdinalIgnoreCase) < 0;
     }
 
-    public static bool IsStorePath(string path)
-        => path.IndexOf(@"\WindowsApps\" + StorePackage + "_", StringComparison.OrdinalIgnoreCase) >= 0;
+    public static bool IsStorePath(string path) => StorePackageName(path) is { } name
+        && (name.Contains("Codex", StringComparison.OrdinalIgnoreCase) || BundlesCodex(path));
+
+    /// <summary>The package name ("OpenAI.Codex") of a path under <c>WindowsApps\OpenAI.*_…</c>, else null. Public for tests.</summary>
+    public static string? StorePackageName(string path)
+    {
+        const string marker = @"\WindowsApps\";
+        var at = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (at < 0) { return null; }
+        var folder = path[(at + marker.Length)..].Split('\\')[0];
+        if (!folder.StartsWith(StorePublisherPrefix, StringComparison.OrdinalIgnoreCase)) { return null; }
+        var underscore = folder.IndexOf('_');
+        return underscore > 0 ? folder[..underscore] : null;
+    }
+
+    /// <summary>An OpenAI package that ships the codex engine (the ChatGPT app with Codex) counts too.</summary>
+    private static bool BundlesCodex(string path)
+    {
+        const string marker = @"\WindowsApps\";
+        var at = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        var root = path[..(at + marker.Length)] + path[(at + marker.Length)..].Split('\\')[0];
+        try
+        {
+            return File.Exists(Path.Combine(root, "app", "resources", "codex.exe"))
+                || File.Exists(Path.Combine(root, "app", "resources", "bin", "codex.exe"))
+                || File.Exists(Path.Combine(root, "resources", "codex.exe"));
+        }
+        catch { return false; }
+    }
 
     private static List<(Process Process, string Path)> Find()
     {
         var found = new List<(Process, string)>();
         foreach (var p in Process.GetProcesses())
         {
-            string? path = null;
-            try { path = p.MainModule?.FileName; } catch { /* system or elevated process */ }
+            var path = ImagePath(p);
             if (path is not null && IsDesktopPath(path, HasWindow(p))) { found.Add((p, path)); }
             else { p.Dispose(); }
         }
@@ -299,8 +329,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         if (folders.Count == 0) { return found; }
         foreach (var p in Process.GetProcesses())
         {
-            string? path = null;
-            try { path = p.MainModule?.FileName; } catch { }
+            var path = ImagePath(p);
             if (path is not null && found.All(f => f.Item1.Id != p.Id)
                 && folders.Any(d => path.StartsWith(d + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
             {
@@ -310,6 +339,57 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// The process's executable. QueryFullProcessImageName needs only limited query rights, which packaged (Store) and
+    /// sandboxed processes still grant; MainModule needs more and is the fallback.
+    /// </summary>
+    private static string? ImagePath(Process p)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var handle = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, p.Id);
+            if (handle != IntPtr.Zero)
+            {
+                try
+                {
+                    var buffer = new char[1024];
+                    var size = buffer.Length;
+                    if (QueryFullProcessImageName(handle, 0, buffer, ref size)) { return new string(buffer, 0, size); }
+                }
+                finally { CloseHandle(handle); }
+            }
+        }
+
+        try { return p.MainModule?.FileName; } catch { return null; }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, int processId);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW")]
+    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, char[] name, ref int size);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    public string Describe()
+    {
+        if (!OperatingSystem.IsWindows()) { return string.Empty; }
+        var lines = new List<string>();
+        foreach (var p in Process.GetProcesses())
+        {
+            using (p)
+            {
+                string name;
+                try { name = p.ProcessName; } catch { continue; }
+                if (name.IndexOf("codex", StringComparison.OrdinalIgnoreCase) < 0 && name.IndexOf("chatgpt", StringComparison.OrdinalIgnoreCase) < 0) { continue; }
+                lines.Add(name + "（" + (ImagePath(p) ?? "路径不可读") + (HasWindow(p) ? "，有窗口" : string.Empty) + "）");
+            }
+        }
+
+        return lines.Count == 0 ? "没有名字含 Codex / ChatGPT 的进程" : string.Join("；", lines.Distinct().Take(8));
     }
 
     private static bool HasWindow(Process p)
@@ -327,7 +407,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         if (IsStorePath(path))
         {
             // Store apps cannot be started from their WindowsApps folder; open the package's app instead.
-            const string script = "$p = Get-AppxPackage -Name " + StorePackage + " | Select-Object -First 1; "
+            var script = "$p = Get-AppxPackage -Name " + StorePackageName(path) + " | Select-Object -First 1; "
                 + "$id = (Get-AppxPackageManifest $p).Package.Applications.Application | Select-Object -First 1 -ExpandProperty Id; "
                 + "Start-Process ('shell:AppsFolder\\' + $p.PackageFamilyName + '!' + $id)";
             var psi = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };

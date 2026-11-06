@@ -11,10 +11,20 @@ public class CodexDesktopAppTests
     [InlineData(@"C:\Users\u\AppData\Local\Programs\Codex\Codex.exe", true, true)]
     [InlineData(@"C:\Users\u\AppData\Local\Programs\Codex\Codex.exe", false, false)]
     [InlineData(@"C:\Users\u\AppData\Roaming\npm\node_modules\@openai\codex\vendor\codex.exe", true, false)]
+    [InlineData(@"C:\Program Files\WindowsApps\OpenAI.Codex_26.1.2.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe", true, true)]
+    [InlineData(@"C:\Program Files\WindowsApps\OpenAI.ChatGPTCodex_1.0.0.0_x64__abc\app\ChatGPT.exe", true, true)]
     [InlineData(@"C:\Program Files\WindowsApps\OpenAI.ChatGPT_1.0.0.0_x64__abc\ChatGPT.exe", true, false)]
+    [InlineData(@"C:\Program Files\WindowsApps\Microsoft.Codex_1.0.0.0_x64__abc\Codex.exe", false, false)]
     [InlineData("", true, false)]
     public void OnlyTheDesktopAppIsRestarted(string path, bool hasWindow, bool expected)
         => Assert.Equal(expected, CodexDesktopApp.IsDesktopPath(path, hasWindow));
+
+    [Theory]
+    [InlineData(@"C:\Program Files\WindowsApps\OpenAI.Codex_26.1.2.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe", "OpenAI.Codex")]
+    [InlineData(@"D:\WindowsApps\OpenAI.ChatGPT-Desktop_1.2.3.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe", "OpenAI.ChatGPT-Desktop")]
+    [InlineData(@"C:\Users\u\AppData\Local\Programs\Codex\Codex.exe", null)]
+    public void TheStorePackageNameComesFromItsFolder(string path, string? expected)
+        => Assert.Equal(expected, CodexDesktopApp.StorePackageName(path));
 
     [Theory]
     [InlineData("/home/u/.codex/packages/app-server-daemon/releases/0.166.0/bin/codex|app-server|--listen|unix://|--managed-daemon", true)]

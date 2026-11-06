@@ -541,7 +541,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         bool running;
         try { running = await Task.Run(_services.CodexDesktop.IsRunning).ConfigureAwait(true); }
         catch (Exception ex) { _services.Log.Warn("无法检测" + name + "：" + _services.Secrets.Redact(ex.Message)); return; }
-        if (!running) { return; }
+        if (!running)
+        {
+            // Not found: say what was seen, so a renamed app can be recognised next time.
+            var seen = await Task.Run(_services.CodexDesktop.Describe).ConfigureAwait(true);
+            if (seen.Length > 0) { _services.Log.Info("没有检测到运行中的" + name + "，未提示重启。看到的进程：" + seen); }
+            return;
+        }
+
         if (!await _dialogs.ConfirmAsync("重启 " + name, why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
 
         var status = StatusText;
