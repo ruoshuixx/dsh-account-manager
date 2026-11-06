@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using AccountManager.App.Services;
 using AccountManager.App.ViewModels;
 using AccountManager.Core.Accounts;
+using AccountManager.Core.Actions;
 using AccountManager.Core.Models;
 using AccountManager.Core.Dsh;
 using AccountManager.Core.Logging;
@@ -55,7 +56,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         settings.CodexHome = CodexHome;
         var secrets = new SecretRegistry(false);
         return new AppServices(settings, Path.Combine(_root, "app"), new AppLog(secrets, Path.Combine(_root, "logs")), null, _openCode,
-            new AccountVault(Path.Combine(_root, "app"), Protect, Unprotect), new BackupService(Path.Combine(_root, "backups"), Protect, Unprotect), codexDesktop: _desktop);
+            new AccountVault(Path.Combine(_root, "app"), Protect, Unprotect), new BackupService(Path.Combine(_root, "backups"), Protect, Unprotect), openCodeConfig: _openCode, codexDesktop: _desktop);
     }
 
     /// <summary>A view model on dsh as the target: accounts are seeded first, then a test selects its target.</summary>
@@ -102,6 +103,16 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     private static AccountRowViewModel Row(MainWindowViewModel vm, string id) => vm.Accounts.Single(a => a.Row.CredentialId == id);
+
+    private static async Task<string> AddSwitchRowAsync(AppServices services, bool api)
+    {
+        if (!api) { return await AddAsync(services, "b@example.test", "acct-2", "refresh-b", activate: false); }
+        var added = await services.Actions.CreateManagedApiProviderAsync(AccountActions.NewApiProviderId(), "测试 API",
+            "https://api.example.test/v1", new[] { "test-model" }, "fake-api-key", useResponses: true);
+        Assert.True(added.Saved && added.Complete, added.Warning);
+        await services.ShareApisAsync();
+        return added.CredentialID;
+    }
 
     // ---- the tick boxes -------------------------------------------------------
 
@@ -260,6 +271,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         Assert.StartsWith("重启 Codex 测试版", Assert.Single(dialogs.Confirms));
         Assert.Contains("refresh-b", File.ReadAllText(CodexAuth)); // switched either way
         Assert.Equal(restart ? 1 : 0, _desktop.Restarts);
+        Assert.Equal(0, _desktop.Starts);
         Assert.Contains(restart ? "已重启 Codex 桌面版" : "重启后才生效", vm.StatusText);
     }
 
@@ -287,6 +299,68 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         await vm.SwitchAsync(Row(vm, b));
         Assert.Single(dialogs.Confirms);
         Assert.Contains("已经是 Codex 的当前账号", vm.StatusText);
+        Assert.Equal(0, _desktop.Starts);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public async Task ClickingTheCurrentCodexRowStartsAnInstalledDesktopAppWithoutAsking(bool api, bool installed)
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        var b = await AddSwitchRowAsync(services, api);
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await services.SwitchAsync(b);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        var row = Row(vm, b);
+        Assert.True(row.IsCurrent);
+        var authBefore = File.ReadAllBytes(CodexAuth);
+        var configBefore = services.CodexApi.ReadText();
+        _desktop.Installed = installed;
+
+        await vm.SwitchAsync(row);
+
+        Assert.Empty(dialogs.Confirms);
+        Assert.Equal(installed ? 1 : 0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth));
+        Assert.Equal(configBefore, services.CodexApi.ReadText());
+        Assert.Equal(row.Title + " 已经是 Codex 的当前账号" + (installed ? " · 已启动 Codex 桌面版" : "。"), vm.StatusText);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public async Task SwitchingAnotherCodexRowStartsAnInstalledDesktopAppWithoutAsking(bool api, bool installed)
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        var b = await AddSwitchRowAsync(services, api);
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        Assert.False(Row(vm, b).IsCurrent);
+        _desktop.Installed = installed;
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.Empty(dialogs.Confirms);
+        Assert.Equal(installed ? 1 : 0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Restarts);
+        Assert.True(Row(vm, b).IsCurrent);
+        Assert.StartsWith("已切换 Codex 账号：", vm.StatusText);
+        if (installed)
+        {
+            Assert.EndsWith(" · 已启动 Codex 桌面版", vm.StatusText);
+            Assert.DoesNotContain("重启后才生效", vm.StatusText);
+        }
+        else { Assert.Contains("重启后才生效", vm.StatusText); }
     }
 
     [AvaloniaFact]
@@ -303,6 +377,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
 
         Assert.Empty(dialogs.Confirms);
         Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(0, _desktop.Starts);
     }
 
     [AvaloniaFact]
@@ -365,14 +440,44 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         Assert.Contains("已跳过", vm.StatusText);
     }
 
+    [AvaloniaTheory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AnAutomaticCodexSwitchNeverStartsOrRestartsTheDesktopApp(bool current, bool running)
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddAsync(services, "b@example.test", "acct-2", "refresh-b", activate: false);
+        WriteCodexLogin(current ? "b@example.test" : "c@example.test", current ? "acct-2" : "acct-3", current ? "refresh-b" : "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        _desktop.Installed = true;
+        _desktop.Running = running;
+
+        var switchCore = typeof(MainWindowViewModel).GetMethod("SwitchCoreAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await (Task)switchCore.Invoke(vm, new object[] { Row(vm, b), false })!;
+
+        Assert.Empty(dialogs.Confirms);
+        Assert.Equal(0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Restarts);
+        Assert.True(Row(vm, b).IsCurrent);
+        Assert.Contains("refresh-b", File.ReadAllText(CodexAuth));
+    }
+
     // ---- fakes ------------------------------------------------------------------
 
     private sealed class FakeCodexDesktop : ICodexDesktopApp
     {
         public string Name => "Codex 测试版";
         public bool Running { get; set; }
+        public bool Installed { get; set; }
+        public int Starts { get; private set; }
         public int Restarts { get; private set; }
         public bool IsRunning() => Running;
+        public bool IsInstalled() => Installed;
+        public Task<string> StartAsync(CancellationToken cancellationToken = default) { Starts++; return Task.FromResult("已启动 Codex 桌面版"); }
         public Task<string> RestartAsync(CancellationToken cancellationToken = default) { Restarts++; return Task.FromResult("已重启 Codex 桌面版"); }
     }
 
@@ -395,7 +500,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     /// <summary>An in-memory OpenCode; unavailable (like a missing CLI) until a test says otherwise.</summary>
-    private sealed class FakeOpenCode : IOpenCodeCredentialApi
+    private sealed class FakeOpenCode : IOpenCodeCredentialApi, IOpenCodeConfigFile
     {
         public bool Available { get; set; }
         public List<JsonObject> Credentials { get; } = new();
@@ -404,6 +509,12 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         {
             if (!Available) { throw new OpenCodeException("找不到 OpenCode CLI。请先启动桌面版一次，或在设置中手动选择 CLI 文件。"); }
         }
+
+        public Task<OpenCodeConfigDocument> ReadAsync(CancellationToken cancellationToken = default)
+            => throw new OpenCodeException("找不到 OpenCode 配置（测试环境）。");
+
+        public Task WriteAsync(OpenCodeConfigDocument document, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("The test must not write an OpenCode config.");
 
         public void AddLogin(string email, string accountId, string refresh, bool active)
         {

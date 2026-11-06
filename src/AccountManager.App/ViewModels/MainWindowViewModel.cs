@@ -480,8 +480,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         if (row.IsCurrent)
         {
             StatusText = row.Title + " 已经是 " + name + " 的当前账号。";
-            // Codex desktop may still run with an older login: offer the restart anyway.
-            if (target == SwitchTarget.Codex && interactive) { await OfferCodexRestartAsync(row, _services.CodexDesktop.Name + "需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。"); }
+            // A manual click also opens Codex, or offers a restart if it still has an older login.
+            if (target == SwitchTarget.Codex && interactive)
+            {
+                IsBusy = true;
+                try { await OfferCodexRestartAsync("需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。"); }
+                finally { IsBusy = false; }
+            }
             return;
         }
 
@@ -512,7 +517,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             if (result.Changed && target == SwitchTarget.Codex && interactive)
             {
                 // Codex desktop only reads the login when it starts.
-                await OfferCodexRestartAsync(row, _services.CodexDesktop.Name + "重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
+                await OfferCodexRestartAsync("重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
             }
             if (result.ReauthRequired)
             {
@@ -534,35 +539,44 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         if (!string.IsNullOrEmpty(status) && StatusText.StartsWith("已读取", StringComparison.Ordinal)) { StatusText = status; }
     }
 
-    /// <summary>When the Codex desktop app runs: asks, then closes and reopens it. The status bar says how it went.</summary>
-    private async Task OfferCodexRestartAsync(AccountRowViewModel row, string why)
+    /// <summary>After a manual switch: opens the desktop app, or asks before restarting a running app or service.</summary>
+    private async Task OfferCodexRestartAsync(string why)
     {
-        var name = _services.CodexDesktop.Name;
+        var desktop = _services.CodexDesktop;
+        string name;
         bool running;
-        try { running = await Task.Run(_services.CodexDesktop.IsRunning).ConfigureAwait(true); }
-        catch (Exception ex) { _services.Log.Warn("无法检测" + name + "：" + _services.Secrets.Redact(ex.Message)); return; }
-        if (!running)
+        bool installed;
+        try
+        {
+            (name, running, installed) = await Task.Run(() =>
+            {
+                var found = desktop.IsRunning();
+                return (desktop.Name, found, !found && desktop.IsInstalled());
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex) { _services.Log.Warn("无法检测 Codex：" + _services.Secrets.Redact(ex.Message)); return; }
+        if (!running && !installed)
         {
             // Not found: say what was seen, so a renamed app can be recognised next time.
-            var seen = await Task.Run(_services.CodexDesktop.Describe).ConfigureAwait(true);
+            var seen = await Task.Run(desktop.Describe).ConfigureAwait(true);
             if (seen.Length > 0) { _services.Log.Info("没有检测到运行中的" + name + "，未提示重启。看到的进程：" + seen); }
             return;
         }
 
-        if (!await _dialogs.ConfirmAsync("重启 " + name, why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
+        if (running && !await _dialogs.ConfirmAsync("重启 " + name, name + why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
 
         var status = StatusText;
-        StatusText = "正在重启" + name + " …";
+        StatusText = running ? "正在重启" + name + " …" : "正在启动 Codex 桌面版 …";
         try
         {
-            var restarted = await _services.CodexDesktop.RestartAsync().ConfigureAwait(true);
-            _services.Log.Info(restarted);
-            // Drop the "restart needed" hint the switch added, it is done now.
-            StatusText = status.Split(" · ")[0] + " · " + restarted;
+            var result = await Task.Run(() => running ? desktop.RestartAsync() : desktop.StartAsync()).ConfigureAwait(true);
+            _services.Log.Info(result);
+            // Replace the "restart needed" hint with the actual launch result.
+            StatusText = status.Split(" · ")[0].TrimEnd('。') + " · " + result;
         }
         catch (Exception ex)
         {
-            StatusText = "重启" + name + "失败：" + _services.Secrets.Redact(ex.Message);
+            StatusText = (running ? "重启" + name : "启动 Codex 桌面版") + "失败：" + _services.Secrets.Redact(ex.Message);
         }
     }
 

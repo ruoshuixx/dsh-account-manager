@@ -31,13 +31,13 @@ public sealed class AppServices : IAddAccountServices
     public AppServices(AppSettings settings, string? appDataDirectory = null, AppLog? log = null, string? backupDirectory = null, IOpenCodeCredentialApi? openCodeApi = null, AccountVault? vault = null, BackupService? backups = null, IOpenCodeConfigFile? openCodeConfig = null, ICodexDesktopApp? codexDesktop = null)
     {
         Settings = settings;
-        CodexDesktop = codexDesktop ?? new CodexDesktopApp();
         Secrets = new SecretRegistry();
         LogDirectory = PortablePaths.Logs;
         Log = log ?? new AppLog(Secrets, LogDirectory);
 
         Home = ResolveHome(settings);
         Vault = vault ?? new AccountVault(appDataDirectory ?? AccountVault.DefaultDirectory());
+        CodexDesktop = codexDesktop ?? new CodexDesktopApp(Vault.Directory);
         Backups = backups ?? (backupDirectory is null ? new BackupService() : new BackupService(backupDirectory));
         Subscriptions = new SubscriptionStore(Vault.Directory, Log);
         CodexCli = new CodexCliAuthStore(() => Settings.CodexHome, Backups);
