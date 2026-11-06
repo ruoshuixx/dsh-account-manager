@@ -166,9 +166,9 @@ public sealed class CompactLayoutTests : IDisposable
             vm.SwitchTargetOpenCode = true; // the hint shows while Codex or OpenCode is the target
             Dispatcher.UIThread.RunJobs();
             window.UpdateLayout();
-            var boxes = window.GetVisualDescendants().OfType<CheckBox>().Where(c => c.IsEffectivelyVisible && c.Content is string).ToList();
+            var boxes = window.GetVisualDescendants().OfType<RadioButton>().Where(c => c.IsEffectivelyVisible && c.Content is string).ToList();
             Assert.Equal(new[] { true }, boxes.Where(c => (string?)c.Content == "OpenCode").Select(c => c.IsChecked == true).ToArray());
-            Assert.Equal(new[] { "dsh", "Codex", "OpenCode" }, boxes.Where(c => (string?)c.Content is "dsh" or "Codex" or "OpenCode").Select(c => (string)c.Content!).ToArray());
+            Assert.Equal(new[] { "Codex", "dsh", "OpenCode" }, boxes.Where(c => (string?)c.Content is "dsh" or "Codex" or "OpenCode").Select(c => (string)c.Content!).ToArray());
             Assert.Equal(1, boxes.Count(c => c.IsChecked == true && (string?)c.Content is "dsh" or "Codex" or "OpenCode"));
             Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == vm.TargetHint && t.Text!.Length > 0);
             LayoutProbe.AssertClean(window);
@@ -222,23 +222,23 @@ public sealed class CompactLayoutTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void ClickingTheTickedTargetBoxLeavesItTickedAndClickingAnotherMovesTheTick()
+    public void TheTargetIsOneOfThreeRadioButtonsStartingOnCodex()
     {
         var (window, vm) = OpenMain(MainWindow.DesignMinWidth, MainWindow.DesignMinHeight, 1.0);
         try
         {
-            CheckBox Box(string name) => window.GetVisualDescendants().OfType<CheckBox>().Single(c => (string?)c.Content == name);
-            Assert.True(Box("dsh").IsChecked);
+            RadioButton Box(string name) => window.GetVisualDescendants().OfType<RadioButton>().Single(c => (string?)c.Content == name);
+            Assert.True(Box("Codex").IsChecked); // a first run starts on Codex
 
-            Box("dsh").IsChecked = false; // what a click on the ticked box does to the control
+            Box("Codex").IsChecked = false; // nothing may leave all three empty
             Dispatcher.UIThread.RunJobs();
-            Assert.True(Box("dsh").IsChecked);
-            Assert.True(vm.SwitchTargetDsh);
+            Assert.True(Box("Codex").IsChecked);
+            Assert.True(vm.SwitchTargetCodex);
 
-            Box("Codex").IsChecked = true;
+            Box("dsh").IsChecked = true;
             Dispatcher.UIThread.RunJobs();
-            Assert.Equal(new[] { false, true, false }, new[] { Box("dsh"), Box("Codex"), Box("OpenCode") }.Select(c => c.IsChecked == true).ToArray());
-            Assert.Equal(SwitchTarget.Codex, vm.SelectedSwitchTarget);
+            Assert.Equal(new[] { false, true, false }, new[] { Box("Codex"), Box("dsh"), Box("OpenCode") }.Select(c => c.IsChecked == true).ToArray());
+            Assert.Equal(SwitchTarget.Dsh, vm.SelectedSwitchTarget);
         }
         finally { window.Close(); }
     }

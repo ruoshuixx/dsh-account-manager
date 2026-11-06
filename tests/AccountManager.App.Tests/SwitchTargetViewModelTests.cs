@@ -61,7 +61,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     /// <summary>A view model on dsh as the target: accounts are seeded first, then a test selects its target.</summary>
     private (AppServices Services, MainWindowViewModel Vm, ScriptedDialogs Dialogs) NewVm(bool confirm = true)
     {
-        var services = NewServices(new AppSettings());
+        var services = NewServices(new AppSettings { SwitchTarget = SwitchTarget.Dsh });
         var dialogs = new ScriptedDialogs { Confirm = confirm };
         return (services, new MainWindowViewModel(services, dialogs, startBackgroundWork: false, settingsStore: new SettingsStore(_settingsPath)), dialogs);
     }
@@ -116,7 +116,7 @@ public sealed class SwitchTargetViewModelTests : IDisposable
             Assert.Equal((dsh, codex, openCode), (vm.SwitchTargetDsh, vm.SwitchTargetCodex, vm.SwitchTargetOpenCode));
         }
 
-        AssertOnly(true, false, false); // the default
+        AssertOnly(true, false, false); // these tests start on dsh
 
         vm.SwitchTargetCodex = true;
         AssertOnly(false, true, false);

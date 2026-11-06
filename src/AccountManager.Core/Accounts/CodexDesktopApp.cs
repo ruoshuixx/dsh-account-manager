@@ -18,20 +18,25 @@ public interface ICodexDesktopApp
 /// <summary>
 /// Windows: the Microsoft Store app (package <c>OpenAI.Codex</c>, under <c>WindowsApps</c>) or a window process named
 /// Codex outside an npm install. It is asked to close, then whatever is left of it (its bundled app-server included) is
-/// ended, and it is opened again through its package (Store) or its executable. Linux has no desktop app; there the
-/// counterpart is Codex's managed app-server daemon (remote control, IDE and SSH clients), restarted with its own
-/// <c>codex app-server daemon restart</c>. CLI sessions read auth.json when they start and are left alone.
+/// ended, and it is opened again through its package (Store) or its executable. Linux: the desktop app (OpenAI's .deb,
+/// package <c>chatgpt</c>, ChatGPT with Codex) is found by its installed files, asked to quit (SIGTERM), ended if it
+/// lingers and opened again through its .desktop entry; Codex's managed app-server daemon (remote control, IDE and SSH
+/// clients) is restarted with its own <c>codex app-server daemon restart</c>. CLI sessions read auth.json when they
+/// start and are left alone.
 /// </summary>
 public sealed class CodexDesktopApp : ICodexDesktopApp
 {
-    public string Name => OperatingSystem.IsWindows() ? "Codex 桌面版" : "Codex 后台服务";
+    /// <summary>Debian packages of the Linux desktop app.</summary>
+    private static readonly string[] LinuxPackages = { "chatgpt", "codex-desktop", "codex" };
+
+    public string Name => OperatingSystem.IsLinux() && LinuxDesktop().Executables.Count == 0 ? "Codex 后台服务" : "Codex 桌面版";
 
     private const string StorePackage = "OpenAI.Codex";
     private static readonly TimeSpan CloseWait = TimeSpan.FromSeconds(6);
 
     public bool IsRunning()
     {
-        if (OperatingSystem.IsLinux()) { return FindDaemon() is not null; }
+        if (OperatingSystem.IsLinux()) { return FindLinuxDesktop().Count > 0 || FindDaemon() is not null; }
         if (!OperatingSystem.IsWindows()) { return false; }
         var found = Find();
         try { return found.Count > 0; }
@@ -40,7 +45,13 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
 
     public async Task<string> RestartAsync(CancellationToken cancellationToken = default)
     {
-        if (OperatingSystem.IsLinux()) { return await RestartDaemonAsync(cancellationToken).ConfigureAwait(false); }
+        if (OperatingSystem.IsLinux())
+        {
+            var results = new List<string>();
+            if (FindLinuxDesktop().Count > 0) { results.Add(await RestartLinuxDesktopAsync(cancellationToken).ConfigureAwait(false)); }
+            if (FindDaemon() is not null) { results.Add(await RestartDaemonAsync(cancellationToken).ConfigureAwait(false)); }
+            return results.Count == 0 ? "Codex 没有在运行" : string.Join("；", results);
+        }
         if (!OperatingSystem.IsWindows()) { return "这台电脑没有 Codex 桌面版"; }
         var found = Find();
         if (found.Count == 0) { return "Codex 桌面版没有在运行"; }
@@ -89,6 +100,123 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
             return "已关闭 Codex 桌面版，但没能重新打开（" + ex.Message + "），请手动打开";
         }
     }
+
+    // ---- Linux desktop app ----------------------------------------------------------
+
+    private static (IReadOnlySet<string> Executables, string? DesktopEntry) _linuxDesktop = (new HashSet<string>(), null);
+    private static DateTime _linuxDesktopRead;
+
+    /// <summary>The installed desktop app's executables and .desktop entry (from dpkg; re-read at most once a minute).</summary>
+    private static (IReadOnlySet<string> Executables, string? DesktopEntry) LinuxDesktop()
+    {
+        if (DateTime.UtcNow - _linuxDesktopRead < TimeSpan.FromMinutes(1)) { return _linuxDesktop; }
+        var files = new List<string>();
+        foreach (var package in LinuxPackages)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("dpkg-query") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var a in new[] { "-L", package }) { psi.ArgumentList.Add(a); }
+                using var p = Process.Start(psi);
+                if (p is null) { continue; }
+                var output = p.StandardOutput.ReadToEnd();
+                if (!p.WaitForExit(5000) || p.ExitCode != 0) { continue; }
+                files.AddRange(output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            }
+            catch { /* no dpkg */ }
+        }
+
+        _linuxDesktop = SelectLinuxDesktop(files, f => File.Exists(f) && !Directory.Exists(f) && IsExecutable(f));
+        _linuxDesktopRead = DateTime.UtcNow;
+        return _linuxDesktop;
+    }
+
+    /// <summary>From a package's file list: its executables (not the bundled codex CLI) and its .desktop entry. Public for tests.</summary>
+    public static (IReadOnlySet<string> Executables, string? DesktopEntry) SelectLinuxDesktop(IEnumerable<string> files, Func<string, bool> isExecutable)
+    {
+        var list = files.ToList();
+        var executables = list
+            .Where(f => !f.EndsWith(".so", StringComparison.Ordinal) && !f.Contains(".so.", StringComparison.Ordinal)
+                && Path.GetFileName(f) is not ("codex" or "chrome-sandbox" or "chrome_crashpad_handler")
+                && isExecutable(f))
+            .ToHashSet(StringComparer.Ordinal);
+        var entry = list.FirstOrDefault(f => f.StartsWith("/usr/share/applications/", StringComparison.Ordinal) && f.EndsWith(".desktop", StringComparison.Ordinal));
+        return (executables, entry);
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        try { return (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) != 0; }
+        catch { return false; }
+    }
+
+    /// <summary>Running processes of the desktop app (pid, executable).</summary>
+    private static List<(int Pid, string Exe)> FindLinuxDesktop()
+    {
+        var found = new List<(int, string)>();
+        var executables = LinuxDesktop().Executables;
+        if (executables.Count == 0) { return found; }
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories("/proc"))
+            {
+                if (!int.TryParse(Path.GetFileName(dir), out var pid) || pid == Environment.ProcessId) { continue; }
+                try
+                {
+                    var exe = new FileInfo(Path.Combine(dir, "exe")).ResolveLinkTarget(true)?.FullName;
+                    if (exe is not null && executables.Contains(exe)) { found.Add((pid, exe)); }
+                }
+                catch { /* gone, or another user's process */ }
+            }
+        }
+        catch { /* no /proc */ }
+
+        return found;
+    }
+
+    private static async Task<string> RestartLinuxDesktopAsync(CancellationToken cancellationToken)
+    {
+        var found = FindLinuxDesktop();
+        if (found.Count == 0) { return "Codex 桌面版没有在运行"; }
+        var main = found.MinBy(f => f.Pid).Exe;
+        foreach (var (pid, _) in found) { Signal(pid, "TERM"); }
+
+        var deadline = DateTime.UtcNow + CloseWait;
+        while (DateTime.UtcNow < deadline && FindLinuxDesktop().Count > 0) { await Task.Delay(250, cancellationToken).ConfigureAwait(false); }
+        foreach (var (pid, _) in FindLinuxDesktop()) { Signal(pid, "KILL"); }
+        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var entry = LinuxDesktop().DesktopEntry;
+            // The .desktop entry starts it the way the menu does; setsid detaches it from this program either way.
+            var psi = entry is not null && File.Exists("/usr/bin/gtk-launch")
+                ? new ProcessStartInfo("setsid") { ArgumentList = { "-f", "gtk-launch", Path.GetFileNameWithoutExtension(entry) } }
+                : new ProcessStartInfo("setsid") { ArgumentList = { "-f", main } };
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException("无法启动");
+            p.WaitForExit(10000);
+            return "已重启 Codex 桌面版";
+        }
+        catch (Exception ex)
+        {
+            return "已关闭 Codex 桌面版，但没能重新打开（" + ex.Message + "），请手动打开";
+        }
+    }
+
+    private static void Signal(int pid, string signal)
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo("kill") { ArgumentList = { "-" + signal, pid.ToString(System.Globalization.CultureInfo.InvariantCulture) }, UseShellExecute = false, RedirectStandardError = true });
+            p?.WaitForExit(3000);
+        }
+        catch { /* already gone */ }
+    }
+
+    // ---- Linux managed app-server daemon --------------------------------------------------
 
     /// <summary>Whether a process command line is Codex's managed app-server daemon (not a plain app-server someone started). Public for tests.</summary>
     public static bool IsManagedDaemon(IReadOnlyList<string> args)

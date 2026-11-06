@@ -1,5 +1,6 @@
 using AccountManager.Core.Accounts;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
@@ -20,9 +21,9 @@ public sealed class AppSettings
     /// <summary>OpenCode CLI executable override (null = auto-detect).</summary>
     public string? OpenCodeCliPath { get; set; }
 
-    /// <summary>The one program a switch writes to: dsh, Codex (auth.json) or OpenCode.</summary>
+    /// <summary>The one program a switch writes to: dsh, Codex (auth.json) or OpenCode. A first run starts on Codex.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    public SwitchTarget SwitchTarget { get; set; } = SwitchTarget.Dsh;
+    public SwitchTarget SwitchTarget { get; set; } = SwitchTarget.Codex;
 
     /// <summary>
     /// Legacy (0.1.7 - 0.1.8) "also switch the Codex CLI" flag. Only read so an old settings file loads; it has no effect
@@ -121,8 +122,16 @@ public sealed class SettingsStore
     {
         try
         {
-            var settings = File.Exists(path) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options) : null;
-            if (settings is not null) { settings.SwitchCodexCliToo = null; }
+            if (!File.Exists(path)) { return null; }
+            var text = File.ReadAllText(path);
+            var settings = JsonSerializer.Deserialize<AppSettings>(text, Options);
+            if (settings is not null)
+            {
+                settings.SwitchCodexCliToo = null;
+                // Settings from before the switch target (0.1.x) always switched dsh: keep that, Codex is for a first run.
+                if (JsonNode.Parse(text) is JsonObject o && !o.ContainsKey(nameof(SwitchTarget))) { settings.SwitchTarget = SwitchTarget.Dsh; }
+            }
+
             return settings;
         }
         catch { return null; }

@@ -184,13 +184,13 @@
               <TextBlock Text="删除" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
-          <!-- Switch target: exactly one is ticked (the view model keeps it so); the list's "当前" follows it. -->
-          <CheckBox x:Name="TargetDshBox" Content="dsh" IsChecked="{Binding SwitchTargetDsh, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center" Margin="6,0,0,0"
-                    ToolTip.Tip="切号写入 dsh 当前的 Codex 凭据（只写 dsh，不动 Codex 和 OpenCode）。" />
-          <CheckBox x:Name="TargetCodexBox" Content="Codex" IsChecked="{Binding SwitchTargetCodex, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
-                    ToolTip.Tip="切号写入 ~/.codex/auth.json（Codex CLI 与桌面版共用）。桌面版已打开时需重启才生效。" />
-          <CheckBox x:Name="TargetOpenCodeBox" Content="OpenCode" IsChecked="{Binding SwitchTargetOpenCode, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
-                    ToolTip.Tip="切号把该账号设为 OpenCode 里 openai 的当前 OAuth 凭据（需要已安装 OpenCode）。" />
+          <!-- Switch target: one of three (radio buttons); the list's "当前" follows it. -->
+          <RadioButton x:Name="TargetCodexBox" GroupName="SwitchTarget" Content="Codex" IsChecked="{Binding SwitchTargetCodex, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center" Margin="6,0,0,0"
+                       ToolTip.Tip="切号写入 ~/.codex/auth.json（Codex CLI 与桌面版共用）。桌面版已打开时需重启才生效。" />
+          <RadioButton x:Name="TargetDshBox" GroupName="SwitchTarget" Content="dsh" IsChecked="{Binding SwitchTargetDsh, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
+                       ToolTip.Tip="切号写入 dsh 当前的 Codex 凭据（桌面版和命令行共用，不动 Codex 和 OpenCode）。" />
+          <RadioButton x:Name="TargetOpenCodeBox" GroupName="SwitchTarget" Content="OpenCode" IsChecked="{Binding SwitchTargetOpenCode, Mode=TwoWay}" IsCheckedChanged="OnTargetBoxChanged" VerticalAlignment="Center"
+                       ToolTip.Tip="切号把该账号设为 OpenCode 里 openai 的当前 OAuth 凭据（需要已安装 OpenCode）。" />
         </StackPanel>
         <TextBlock Grid.Column="1" Classes="subtitle" Text="{Binding TargetHint}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="API 只需在这里加一次：dsh、OpenCode、Codex 三边共用。OpenCode 可同时选用所有 API；Codex 一次只用一个，且只支持 Responses 协议。" />
         <TextBlock Grid.Column="1" Classes="error" Text="{Binding ProviderWarning}" TextWrapping="NoWrap" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="8,0,10,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProviderWarning}" />

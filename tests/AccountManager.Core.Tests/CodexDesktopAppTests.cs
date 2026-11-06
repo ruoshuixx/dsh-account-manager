@@ -26,6 +26,23 @@ public class CodexDesktopAppTests
         => Assert.Equal(expected, CodexDesktopApp.IsManagedDaemon(cmdline.Split('|')));
 
     [Fact]
+    public void OnLinuxTheDesktopAppIsKnownByItsPackagesFiles()
+    {
+        var files = new[]
+        {
+            "/opt/ChatGPT", "/opt/ChatGPT/chatgpt", "/opt/ChatGPT/chrome-sandbox", "/opt/ChatGPT/libffmpeg.so",
+            "/opt/ChatGPT/resources/bin/codex", "/opt/ChatGPT/resources/app.asar",
+            "/usr/share/applications/chatgpt.desktop", "/usr/share/icons/hicolor/512x512/apps/chatgpt.png",
+        };
+        var executable = new HashSet<string> { "/opt/ChatGPT/chatgpt", "/opt/ChatGPT/chrome-sandbox", "/opt/ChatGPT/libffmpeg.so", "/opt/ChatGPT/resources/bin/codex" };
+
+        var (exes, entry) = CodexDesktopApp.SelectLinuxDesktop(files, executable.Contains);
+
+        Assert.Equal(new[] { "/opt/ChatGPT/chatgpt" }, exes);
+        Assert.Equal("/usr/share/applications/chatgpt.desktop", entry);
+    }
+
+    [Fact]
     public void TheNameSaysWhatIsRestarted()
-        => Assert.Equal(OperatingSystem.IsWindows() ? "Codex 桌面版" : "Codex 后台服务", new CodexDesktopApp().Name);
+        => Assert.Contains(new CodexDesktopApp().Name, new[] { "Codex 桌面版", "Codex 后台服务" });
 }

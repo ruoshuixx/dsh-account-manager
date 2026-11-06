@@ -63,9 +63,9 @@ public partial class MainWindow : Window
     private void SyncTargetBoxes()
     {
         if (DataContext is not MainWindowViewModel vm) { return; }
-        TargetDshBox.SetCurrentValue(CheckBox.IsCheckedProperty, vm.SwitchTargetDsh);
-        TargetCodexBox.SetCurrentValue(CheckBox.IsCheckedProperty, vm.SwitchTargetCodex);
-        TargetOpenCodeBox.SetCurrentValue(CheckBox.IsCheckedProperty, vm.SwitchTargetOpenCode);
+        TargetDshBox.SetCurrentValue(RadioButton.IsCheckedProperty, vm.SwitchTargetDsh);
+        TargetCodexBox.SetCurrentValue(RadioButton.IsCheckedProperty, vm.SwitchTargetCodex);
+        TargetOpenCodeBox.SetCurrentValue(RadioButton.IsCheckedProperty, vm.SwitchTargetOpenCode);
     }
 
     /// <summary>Set by the composition root so the window can persist its size on close.</summary>

@@ -397,13 +397,14 @@ public class DialogTests
     }
 
     [Fact]
-    public void SettingsDefaultToTheDshSwitchTargetAndAnOldFileWithTheLegacyTickStillLoads()
+    public void AFirstRunStartsOnCodexAndAnOldFileWithoutATargetKeepsDsh()
     {
         var settings = new AppSettings();
-        Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Dsh, settings.SwitchTarget);
+        Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Codex, settings.SwitchTarget);
         Assert.Null(settings.CodexHome);
         Assert.Null(settings.OpenCodeCliPath);
-        Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Dsh, System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"DshHome\":\"x\"}")!.SwitchTarget);
+        Assert.Equal(AccountManager.Core.Accounts.SwitchTarget.Codex,
+            new SettingsStore(Path.Combine(Path.GetTempPath(), "setNone-" + Guid.NewGuid().ToString("N")[..8] + ".json")).Load().SwitchTarget);
 
         var path = Path.Combine(Path.GetTempPath(), "setOld-" + Guid.NewGuid().ToString("N")[..8] + ".json");
         try
