@@ -18,18 +18,20 @@ public sealed class DebUpdateAssetTests
 
         Assert.True(profile.IsDeb);
         Assert.True(profile.IsLinux);
-        Assert.Equal("dsh-account-manager_1.2.3_amd64.deb", profile.ExecutableAssetNameFor("v1.2.3"));
-        Assert.Equal("dsh-account-manager_1.2.3_amd64.deb.sha256", profile.ChecksumAssetNameFor("v1.2.3"));
+        Assert.Equal("AIAccountManager-1.2.3-amd64.deb", profile.ExecutableAssetNameFor("v1.2.3"));
+        Assert.Equal("AIAccountManager-1.2.3-amd64.deb.sha256", profile.ChecksumAssetNameFor("v1.2.3"));
     }
 
     [Fact]
-    public void OtherProfilesKeepTheirFixedAssetNames()
+    public void WindowsProfileDerivesAssetNamesWhilePortableLinuxKeepsFixedNames()
     {
         var windows = UpdateAssetProfile.For(UpdatePlatform.WindowsX64);
         var linux = UpdateAssetProfile.For(UpdatePlatform.LinuxX64);
 
-        Assert.Equal("DshAccountManager-win-x64.exe", windows.ExecutableAssetNameFor("v9.9.9"));
+        Assert.Equal("AIAccountManager-9.9.9-win-x64.exe", windows.ExecutableAssetNameFor("v9.9.9"));
+        Assert.Equal("AIAccountManager-9.9.9-win-x64.exe.sha256", windows.ChecksumAssetNameFor("v9.9.9"));
         Assert.Equal("DshAccountManager-linux-x64", linux.ExecutableAssetNameFor("v9.9.9"));
+        Assert.Equal("DshAccountManager-linux-x64.sha256", linux.ChecksumAssetNameFor("v9.9.9"));
         Assert.False(windows.IsDeb);
         Assert.False(linux.IsDeb);
     }
@@ -49,7 +51,7 @@ public sealed class DebUpdateAssetTests
     public async Task DebProfileOffersAnUpdateOnlyWhenTheVersionNamedPackageAndChecksumExist()
     {
         var withDeb = new StubHandler(_ => Json(Release(
-            "dsh-account-manager_1.2.3_amd64.deb", "dsh-account-manager_1.2.3_amd64.deb.sha256")));
+            "AIAccountManager-1.2.3-amd64.deb", "AIAccountManager-1.2.3-amd64.deb.sha256")));
         var service = new GitHubUpdateService(new HttpClient(withDeb), Owner, Repo, UpdatePlatform.LinuxDeb);
 
         var release = await service.CheckAsync(new Version(1, 0, 0));
@@ -57,12 +59,56 @@ public sealed class DebUpdateAssetTests
         Assert.NotNull(release);
         Assert.Equal(UpdatePlatform.LinuxDeb, release!.Platform);
         Assert.Equal(
-            "https://github.com/ruoshuixx/dsh-account-manager/releases/download/v1.2.3/dsh-account-manager_1.2.3_amd64.deb",
+            "https://github.com/ruoshuixx/dsh-account-manager/releases/download/v1.2.3/AIAccountManager-1.2.3-amd64.deb",
             release.DownloadUrl.AbsoluteUri);
 
         var onlyPortable = new StubHandler(_ => Json(Release("DshAccountManager-linux-x64", "DshAccountManager-linux-x64.sha256")));
         var other = new GitHubUpdateService(new HttpClient(onlyPortable), Owner, Repo, UpdatePlatform.LinuxDeb);
         Assert.Null(await other.CheckAsync(new Version(1, 0, 0)));
+    }
+
+    [Theory]
+    [InlineData("AIAccountManager-1.2.3-amd64.deb", true)]
+    [InlineData("dsh-account-manager_1.2.3_amd64.deb", false)]
+    [InlineData("AIAccountManager-1.2.2-amd64.deb", false)]
+    public async Task DebDownloadRequiresChecksumForTheVersionNamedPackage(string checksumFileName, bool matches)
+    {
+        var payload = Encoding.ASCII.GetBytes("!<arch>\ndebian-binary   1700000000  0     0     100644  4         `\n2.0\n");
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+        var payloadRequests = 0;
+        var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith(".sha256", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(hash + "  " + checksumFileName + "\n") };
+            }
+            payloadRequests++;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) };
+        });
+        var service = new GitHubUpdateService(new HttpClient(handler), Owner, Repo, UpdatePlatform.LinuxDeb);
+        var directory = Path.Combine(Path.GetTempPath(), "dam-deb-asset-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            if (matches)
+            {
+                var result = await service.DownloadAsync(MakeRelease(payload.Length), directory);
+
+                Assert.Equal("AIAccountManager-1.2.3-amd64.deb", Path.GetFileName(result));
+                Assert.Equal(payload, await File.ReadAllBytesAsync(result));
+                Assert.Equal(1, payloadRequests);
+            }
+            else
+            {
+                await Assert.ThrowsAsync<InvalidDataException>(() => service.DownloadAsync(MakeRelease(payload.Length), directory));
+
+                Assert.Equal(0, payloadRequests);
+                Assert.False(Directory.Exists(directory));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) { Directory.Delete(directory, true); }
+        }
     }
 
     [Fact]
@@ -78,18 +124,13 @@ public sealed class DebUpdateAssetTests
             {
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(hash + "  dsh-account-manager_1.2.3_amd64.deb\n"),
+                    Content = new StringContent(hash + "  AIAccountManager-1.2.3-amd64.deb\n"),
                 };
             }
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) };
         });
         var service = new GitHubUpdateService(new HttpClient(handler), Owner, Repo, UpdatePlatform.LinuxDeb);
-        var release = new UpdateRelease(
-            new Version(1, 2, 3), "v1.2.3", "notes",
-            new Uri("https://github.com/ruoshuixx/dsh-account-manager/releases/tag/v1.2.3"),
-            new Uri("https://github.com/ruoshuixx/dsh-account-manager/releases/download/v1.2.3/dsh-account-manager_1.2.3_amd64.deb"),
-            new Uri("https://github.com/ruoshuixx/dsh-account-manager/releases/download/v1.2.3/dsh-account-manager_1.2.3_amd64.deb.sha256"),
-            payload.Length, UpdatePlatform.LinuxDeb);
+        var release = MakeRelease(payload.Length);
         var directory = Path.Combine(Path.GetTempPath(), "dam-deb-asset-" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -100,6 +141,14 @@ public sealed class DebUpdateAssetTests
             if (Directory.Exists(directory)) { Directory.Delete(directory, true); }
         }
     }
+
+    private static UpdateRelease MakeRelease(long size)
+        => new(
+            new Version(1, 2, 3), "v1.2.3", "notes",
+            new Uri("https://github.com/ruoshuixx/dsh-account-manager/releases/tag/v1.2.3"),
+            new Uri("https://github.com/ruoshuixx/dsh-account-manager/releases/download/v1.2.3/AIAccountManager-1.2.3-amd64.deb"),
+            new Uri("https://github.com/ruoshuixx/dsh-account-manager/releases/download/v1.2.3/AIAccountManager-1.2.3-amd64.deb.sha256"),
+            size, UpdatePlatform.LinuxDeb);
 
     private static string Release(string packageName, string checksumName)
     {

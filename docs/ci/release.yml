@@ -29,6 +29,8 @@ jobs:
         with:
           name: windows-release
           path: |
+            release/*/AIAccountManager-*-win-x64.exe
+            release/*/AIAccountManager-*-win-x64.exe.sha256
             release/*/DshAccountManager-win-x64.exe
             release/*/DshAccountManager-win-x64.exe.sha256
           if-no-files-found: error
@@ -56,7 +58,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: deb-release
-          path: release-deb/*
+          path: |
+            release-deb/AIAccountManager-*-amd64.deb
+            release-deb/AIAccountManager-*-amd64.deb.sha256
+            release-deb/dsh-account-manager_*_amd64.deb
+            release-deb/dsh-account-manager_*_amd64.deb.sha256
           if-no-files-found: error
           retention-days: 14
 

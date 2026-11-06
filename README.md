@@ -79,15 +79,17 @@ Ubuntu 版在 Ubuntu 桌面上使用过；Windows 版已在真机上验证过导
 
 | 平台 | 文件 |
 |---|---|
-| Windows x64 | `DshAccountManager-win-x64.exe`（单文件，自带 .NET 运行时，放在可写目录里双击运行） |
-| Ubuntu / Debian amd64 | `dsh-account-manager_<版本>_amd64.deb` |
+| Windows x64 | `AIAccountManager-<版本>-win-x64.exe`（单文件，自带 .NET 运行时，放在可写目录里双击运行） |
+| Ubuntu / Debian amd64 | `AIAccountManager-<版本>-amd64.deb` |
 
-校验：`sha256sum -c dsh-account-manager_<版本>_amd64.deb.sha256`（在文件所在目录执行）。
+从 v0.2.1 起使用上述文件名，`<版本>` 为去掉 `v` 的标签；Release 同时保留旧名称的兼容副本，供旧版本更新。
+
+校验：`sha256sum -c AIAccountManager-<版本>-amd64.deb.sha256`（在文件所在目录执行）。
 
 Ubuntu：
 
 ```bash
-sudo apt install ./dsh-account-manager_<版本>_amd64.deb     # 安装；之后在“应用程序”列表里能找到，也可以命令行运行 dsh-account-manager
+sudo apt install ./AIAccountManager-<版本>-amd64.deb        # 安装；之后在“应用程序”列表里能找到，也可以命令行运行 dsh-account-manager
 sudo apt remove dsh-account-manager                          # 卸载
 ```
 
@@ -160,7 +162,7 @@ Ubuntu .deb：
 
 ```bash
 scripts/Publish-Linux.sh <版本> /tmp/dam-publish
-scripts/Build-Deb.sh /tmp/dam-publish /tmp/dam-deb <版本>    # 产出 dsh-account-manager_<版本>_amd64.deb 和 .sha256
+scripts/Build-Deb.sh /tmp/dam-publish /tmp/dam-deb <版本>    # 产出 AIAccountManager-<版本>-amd64.deb、旧名称兼容副本及各自的 .sha256
 ```
 
 发布流程见 [docs/RELEASING.md](docs/RELEASING.md)。

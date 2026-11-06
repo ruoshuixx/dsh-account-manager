@@ -11,8 +11,8 @@ public sealed class LinuxUpdateAssetTests
 {
     private const string Owner = "ruoshuixx";
     private const string Repo = "dsh-account-manager";
-    private const string WindowsExecutable = "DshAccountManager-win-x64.exe";
-    private const string WindowsChecksum = "DshAccountManager-win-x64.exe.sha256";
+    private const string WindowsExecutable = "AIAccountManager-1.2.3-win-x64.exe";
+    private const string WindowsChecksum = "AIAccountManager-1.2.3-win-x64.exe.sha256";
     private const string LinuxExecutable = "DshAccountManager-linux-x64";
     private const string LinuxChecksum = "DshAccountManager-linux-x64.sha256";
 

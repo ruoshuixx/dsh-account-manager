@@ -9,20 +9,17 @@ public enum UpdatePlatform
     LinuxDeb,
 }
 
-/// <summary>A fixed executable/checksum pair for one supported update platform.</summary>
+/// <summary>A locally defined executable/checksum pair for one supported update platform.</summary>
 internal sealed class UpdateAssetProfile
 {
-    private static readonly UpdateAssetProfile Windows = new(
-        UpdatePlatform.WindowsX64,
-        GitHubUpdateService.ExecutableAssetName,
-        GitHubUpdateService.ChecksumAssetName);
+    // Windows and .deb asset names carry the version derived from the release tag.
+    private static readonly UpdateAssetProfile Windows = new(UpdatePlatform.WindowsX64, string.Empty, string.Empty);
 
     private static readonly UpdateAssetProfile Linux = new(
         UpdatePlatform.LinuxX64,
         "DshAccountManager-linux-x64",
         "DshAccountManager-linux-x64.sha256");
 
-    // The .deb file name carries the version, so it is derived from the release tag.
     private static readonly UpdateAssetProfile Deb = new(UpdatePlatform.LinuxDeb, string.Empty, string.Empty);
 
     private UpdateAssetProfile(UpdatePlatform platform, string executableAssetName, string checksumAssetName)
@@ -44,11 +41,16 @@ internal sealed class UpdateAssetProfile
 
     /// <summary>Executable (or package) asset name for a stable tag such as <c>v1.2.3</c>.</summary>
     internal string ExecutableAssetNameFor(string tag)
-        => IsDeb ? "dsh-account-manager_" + TagVersion(tag) + "_amd64.deb" : ExecutableAssetName;
+        => Platform switch
+        {
+            UpdatePlatform.WindowsX64 => "AIAccountManager-" + TagVersion(tag) + "-win-x64.exe",
+            UpdatePlatform.LinuxDeb => "AIAccountManager-" + TagVersion(tag) + "-amd64.deb",
+            _ => ExecutableAssetName,
+        };
 
     /// <summary>The sha256sum file that accompanies <see cref="ExecutableAssetNameFor"/>.</summary>
     internal string ChecksumAssetNameFor(string tag)
-        => IsDeb ? ExecutableAssetNameFor(tag) + ".sha256" : ChecksumAssetName;
+        => Platform == UpdatePlatform.LinuxX64 ? ChecksumAssetName : ExecutableAssetNameFor(tag) + ".sha256";
 
     private static string TagVersion(string tag) => tag.StartsWith('v') ? tag[1..] : tag;
 

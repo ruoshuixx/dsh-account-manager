@@ -16,12 +16,6 @@ namespace AccountManager.Core.Updates;
 /// </summary>
 public sealed class GitHubUpdateService
 {
-    /// <summary>Fixed GitHub asset name of the Windows x64 executable.</summary>
-    public const string ExecutableAssetName = "DshAccountManager-win-x64.exe";
-
-    /// <summary>Fixed GitHub asset name of the sha256sum file for <see cref="ExecutableAssetName"/>.</summary>
-    public const string ChecksumAssetName = "DshAccountManager-win-x64.exe.sha256";
-
     private const string UserAgent = "DshAccountManager-Updater";
     private const string ApiAccept = "application/vnd.github+json";
     private const long MaxExecutableBytes = 200L * 1024 * 1024;

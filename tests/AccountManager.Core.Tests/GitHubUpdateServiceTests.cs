@@ -12,8 +12,8 @@ public class GitHubUpdateServiceTests
 {
     private const string Owner = "ruoshuixx";
     private const string Repo = "dsh-account-manager";
-    private const string ExeName = "DshAccountManager-win-x64.exe";
-    private const string ShaName = "DshAccountManager-win-x64.exe.sha256";
+    private const string ExeName = "AIAccountManager-1.2.3-win-x64.exe";
+    private const string ShaName = "AIAccountManager-1.2.3-win-x64.exe.sha256";
 
     private static readonly byte[] Payload = { (byte)'M', (byte)'Z', 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04 };
 
@@ -39,15 +39,19 @@ public class GitHubUpdateServiceTests
         string? exeUrl = null,
         string? shaUrl = null,
         string? pageUrl = null,
-        string body = "Release notes")
+        string body = "Release notes",
+        string? exeName = null,
+        string? shaName = null)
     {
-        var exe = exeUrl ?? $"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{ExeName}";
-        var sha = shaUrl ?? $"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{ShaName}";
+        exeName ??= "AIAccountManager-" + (tag.StartsWith('v') ? tag[1..] : tag) + "-win-x64.exe";
+        shaName ??= exeName + ".sha256";
+        var exe = exeUrl ?? $"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{exeName}";
+        var sha = shaUrl ?? $"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{shaName}";
         var page = pageUrl ?? $"https://github.com/{Owner}/{Repo}/releases/tag/{tag}";
 
         var assets = new JsonArray();
-        if (includeExe) { assets.Add(new JsonObject { ["name"] = ExeName, ["size"] = size, ["browser_download_url"] = exe }); }
-        if (includeSha) { assets.Add(new JsonObject { ["name"] = ShaName, ["size"] = 80, ["browser_download_url"] = sha }); }
+        if (includeExe) { assets.Add(new JsonObject { ["name"] = exeName, ["size"] = size, ["browser_download_url"] = exe }); }
+        if (includeSha) { assets.Add(new JsonObject { ["name"] = shaName, ["size"] = 80, ["browser_download_url"] = sha }); }
 
         var root = new JsonObject
         {
@@ -107,6 +111,51 @@ public class GitHubUpdateServiceTests
         Assert.Contains("Updater", request.Headers.UserAgent.ToString(), StringComparison.Ordinal);
         Assert.Contains("application/vnd.github+json", request.Headers.Accept.ToString(), StringComparison.Ordinal);
         Assert.Null(request.Headers.Authorization);
+    }
+
+    [Theory]
+    [InlineData(UpdatePlatform.WindowsX64, "v0.2.1", "AIAccountManager-0.2.1-win-x64.exe")]
+    [InlineData(UpdatePlatform.LinuxDeb, "v0.2.1", "AIAccountManager-0.2.1-amd64.deb")]
+    [InlineData(UpdatePlatform.WindowsX64, "v1.2.3", "AIAccountManager-1.2.3-win-x64.exe")]
+    [InlineData(UpdatePlatform.LinuxDeb, "v1.2.3", "AIAccountManager-1.2.3-amd64.deb")]
+    public async Task Check_VersionNamedAssets_ReturnsValidatedRelease(UpdatePlatform platform, string tag, string assetName)
+    {
+        var handler = new StubHandler(_ => JsonResponse(ReleaseJson(tag: tag, exeName: assetName)));
+        var service = new GitHubUpdateService(new HttpClient(handler), Owner, Repo, platform);
+
+        var release = await service.CheckAsync(new Version(0, 2, 0));
+
+        Assert.NotNull(release);
+        Assert.Equal(Version.Parse(tag[1..]), release!.Version);
+        Assert.Equal(platform, release.Platform);
+        Assert.Equal($"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{assetName}", release.DownloadUrl.AbsoluteUri);
+        Assert.Equal($"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{assetName}.sha256", release.ChecksumUrl.AbsoluteUri);
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(UpdatePlatform.WindowsX64, "DshAccountManager-win-x64.exe")]
+    [InlineData(UpdatePlatform.LinuxDeb, "dsh-account-manager_0.2.1_amd64.deb")]
+    public async Task Check_LegacyAssets_ReturnsNull(UpdatePlatform platform, string assetName)
+    {
+        var handler = new StubHandler(_ => JsonResponse(ReleaseJson(tag: "v0.2.1", exeName: assetName)));
+        var service = new GitHubUpdateService(new HttpClient(handler), Owner, Repo, platform);
+
+        Assert.Null(await service.CheckAsync(new Version(0, 2, 0)));
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(UpdatePlatform.WindowsX64, "AIAccountManager-0.2.0-win-x64.exe")]
+    [InlineData(UpdatePlatform.LinuxDeb, "AIAccountManager-0.2.0-amd64.deb")]
+    [InlineData(UpdatePlatform.WindowsX64, "aiaccountmanager-0.2.1-win-x64.exe")]
+    [InlineData(UpdatePlatform.LinuxDeb, "aiaccountmanager-0.2.1-amd64.deb")]
+    public async Task Check_AssetNameDoesNotExactlyMatchTagAndPlatform_ReturnsNull(UpdatePlatform platform, string assetName)
+    {
+        var handler = new StubHandler(_ => JsonResponse(ReleaseJson(tag: "v0.2.1", exeName: assetName)));
+        var service = new GitHubUpdateService(new HttpClient(handler), Owner, Repo, platform);
+
+        Assert.Null(await service.CheckAsync(new Version(0, 2, 0)));
     }
 
     [Theory]
@@ -178,7 +227,7 @@ public class GitHubUpdateServiceTests
     [Fact]
     public async Task Check_AssetOnForeignHost_ReturnsNull()
     {
-        var (service, _) = Create(_ => JsonResponse(ReleaseJson(exeUrl: "https://evil.example/DshAccountManager-win-x64.exe")));
+        var (service, _) = Create(_ => JsonResponse(ReleaseJson(exeUrl: $"https://evil.example/{ExeName}")));
         Assert.Null(await service.CheckAsync(new Version(1, 0, 0)));
     }
 
@@ -193,7 +242,7 @@ public class GitHubUpdateServiceTests
     [Fact]
     public async Task Check_ChecksumOnForeignHost_ReturnsNull()
     {
-        var (service, _) = Create(_ => JsonResponse(ReleaseJson(shaUrl: "http://evil.example/DshAccountManager-win-x64.exe.sha256")));
+        var (service, _) = Create(_ => JsonResponse(ReleaseJson(shaUrl: $"http://evil.example/{ShaName}")));
         Assert.Null(await service.CheckAsync(new Version(1, 0, 0)));
     }
 
@@ -286,10 +335,13 @@ public class GitHubUpdateServiceTests
         Assert.Empty(Directory.GetFileSystemEntries(dir.Path));
     }
 
-    [Fact]
-    public async Task Download_ChecksumWrongFileName_Throws()
+    [Theory]
+    [InlineData("other.exe")]
+    [InlineData("DshAccountManager-win-x64.exe")]
+    [InlineData("AIAccountManager-1.2.2-win-x64.exe")]
+    public async Task Download_ChecksumWrongFileName_Throws(string checksumFileName)
     {
-        var (service, _) = Create(_ => TextResponse($"{new string('a', 64)}  other.exe"));
+        var (service, _) = Create(_ => TextResponse($"{new string('a', 64)}  {checksumFileName}"));
         using var dir = new TempDirectory();
         await Assert.ThrowsAsync<InvalidDataException>(() => service.DownloadAsync(MakeRelease(), dir.Path));
         Assert.Empty(Directory.GetFileSystemEntries(dir.Path));

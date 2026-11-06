@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds dsh-account-manager_<version>_amd64.deb from a Publish-Linux.sh output directory.
+# Builds dsh-account-manager_<version>_amd64.deb and AIAccountManager-<version>-amd64.deb
+# from a Publish-Linux.sh output directory, each with its own checksum file.
 #
 #   scripts/Publish-Linux.sh 1.0.5 /tmp/dam-publish
 #   scripts/Build-Deb.sh /tmp/dam-publish /tmp/dam-deb [debian-version]
@@ -152,3 +153,9 @@ if dpkg-deb -c "$deb" | awk '{print $1}' | grep -Eq '^-..[sS]|^-.....[sS]'; then
 
 sha256sum "$deb" | awk -v n="$(basename "$deb")" '{print $1 "  " n}' > "$deb.sha256"
 printf 'Package=%s\nVersion=%s\nFile=%s\nSHA256=%s\n' "$package" "$version" "$deb" "$(cut -d' ' -f1 "$deb.sha256")"
+
+# Keep the original package file for older updaters and publish a version-named copy for new ones.
+release_deb="$output_dir/AIAccountManager-${version}-amd64.deb"
+cp -- "$deb" "$release_deb"
+sha256sum "$release_deb" | awk -v n="$(basename "$release_deb")" '{print $1 "  " n}' > "$release_deb.sha256"
+printf 'File=%s\nSHA256=%s\n' "$release_deb" "$(cut -d' ' -f1 "$release_deb.sha256")"

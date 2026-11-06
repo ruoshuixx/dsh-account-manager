@@ -10,9 +10,15 @@ $build = Join-Path $root ('.release-staging\publish-' + [Guid]::NewGuid().ToStri
 & dotnet publish $project -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false "-p:Version=$Version" -o $build
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
-$asset = Join-Path $output 'DshAccountManager-win-x64.exe'
+$assetName = "AIAccountManager-$Version-win-x64.exe"
+$asset = Join-Path $output $assetName
 Copy-Item (Join-Path $build 'DshAccountManager.exe') $asset
 $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText(($asset + '.sha256'), ($hash + '  DshAccountManager-win-x64.exe' + "`n"), [Text.Encoding]::ASCII)
+[IO.File]::WriteAllText(($asset + '.sha256'), ($hash + '  ' + $assetName + "`n"), [Text.Encoding]::ASCII)
+# Older installed versions still request the fixed Windows asset name.
+$legacyName = 'DshAccountManager-win-x64.exe'
+$legacyAsset = Join-Path $output $legacyName
+Copy-Item $asset $legacyAsset
+[IO.File]::WriteAllText(($legacyAsset + '.sha256'), ($hash + '  ' + $legacyName + "`n"), [Text.Encoding]::ASCII)
 Get-ChildItem $output | Select-Object Name, Length
 Write-Output ('ReleaseDirectory=' + $output)
