@@ -383,6 +383,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         row.Quota5h = QuotaCellViewModel.FromResult(result, primary: true);
         row.QuotaWk = QuotaCellViewModel.FromResult(result, primary: false);
         row.SetState(QuotaCellViewModel.StateText(result.State.ToString()));
+        if (result.State is QuotaResultState.Success or QuotaResultState.Partial or QuotaResultState.NoData
+            && result.Usage is { } usage) { row.ApplyLivePlan(usage.Plan, result.CheckedAt); }
 
         // A live subscription refresh rides along with the quota query. A value is moved and persisted
         // into the local mirror so it survives a list rebuild or restart; an authoritative "no expiry"
@@ -487,7 +489,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
                 IsBusy = true;
                 try
                 {
-                    var launch = await PrepareCodexSwitchAsync();
+                    var (launch, _) = await PrepareCodexSwitchAsync();
                     await OfferCodexRestartAsync(launch, "需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。");
                 }
                 catch (Exception ex)
@@ -503,6 +505,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         IsBusy = true;
         StatusText = "正在切换 " + name + " 账号 …";
         CodexLaunchPlan? codexLaunch = null;
+        var stopDeclined = false;
         try
         {
             IReadOnlyList<SwitchTarget> others;
@@ -522,8 +525,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
                 if (!confirmed) { StatusText = "已取消切换。"; return; }
             }
 
-            if (target == SwitchTarget.Codex && interactive) { codexLaunch = await PrepareCodexSwitchAsync(); }
+            if (target == SwitchTarget.Codex && interactive) { (codexLaunch, stopDeclined) = await PrepareCodexSwitchAsync(); }
             var result = await Task.Run(() => _services.SwitchAsync(row.Row.CredentialId)).ConfigureAwait(true);
+            if (target == SwitchTarget.Codex && result.Changed && !(OperatingSystem.IsWindows() && stopDeclined))
+            {
+                await Task.Run(() => RetagCodexThreads(row.IsApi ? CodexApiConfig.ProviderId : "openai")).ConfigureAwait(true);
+            }
             StatusText = result.Changed ? "已切换 " + name + " 账号：" + result.Label : result.Label + " 已是 " + name + " 的当前账号。";
             if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
             if (codexLaunch is not null)
@@ -559,8 +566,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
     private sealed record CodexLaunchPlan(string Name, bool ConfirmRestart, bool Restart, bool ShareProjects);
 
+    /// <summary>On Windows a running desktop must never have its thread databases edited.</summary>
+    private void RetagCodexThreads(string provider)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows() && _services.CodexDesktop.IsDesktopRunning()) { return; }
+            var ours = _services.Settings.SharedCodexApis.Concat(_services.CodexApi.LegacyProviderIds)
+                .Concat(new[] { "openai", CodexApiConfig.ProviderId }).Distinct(StringComparer.Ordinal).ToArray();
+            CodexThreadProviders.Retag(_services.CodexCli.Home, provider, ours, out var note);
+            if (!string.IsNullOrEmpty(note)) { _services.Log.Info(note); }
+        }
+        catch (Exception ex) { _services.Log.Warn("共享 Codex 对话失败（不影响切换）：" + _services.Secrets.Redact(ex.Message)); }
+    }
+
     /// <summary>Asks and stops the desktop before any account write. Managed daemons still restart after the switch.</summary>
-    private async Task<CodexLaunchPlan?> PrepareCodexSwitchAsync()
+    private async Task<(CodexLaunchPlan? Launch, bool StopDeclined)> PrepareCodexSwitchAsync()
     {
         var desktop = _services.CodexDesktop;
         string name;
@@ -575,20 +596,20 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
                 return (desktop.Name, foundDesktop || desktop.IsRunning(), foundDesktop, !foundDesktop && desktop.IsInstalled());
             }).ConfigureAwait(true);
         }
-        catch (Exception ex) { _services.Log.Warn("无法检测 Codex：" + _services.Secrets.Redact(ex.Message)); return null; }
+        catch (Exception ex) { _services.Log.Warn("无法检测 Codex：" + _services.Secrets.Redact(ex.Message)); return (null, false); }
         if (!running && !installed)
         {
             // Not found: say what was seen, so a renamed app can be recognised next time.
             var seen = await Task.Run(desktop.Describe).ConfigureAwait(true);
             if (seen.Length > 0) { _services.Log.Info("没有检测到运行中的" + name + "，未提示重启。看到的进程：" + seen); }
-            return null;
+            return (null, false);
         }
 
-        if (running && !desktopRunning) { return new(name, ConfirmRestart: true, Restart: true, ShareProjects: installed); }
+        if (running && !desktopRunning) { return (new(name, ConfirmRestart: true, Restart: true, ShareProjects: installed), false); }
         if (desktopRunning)
         {
             if (!await _dialogs.ConfirmAsync("关闭 " + name,
-                "切换需要先关闭 " + name + "，再写入新账号并重新打开。现在关闭吗？正在进行的对话或任务会被中断。")) { return null; }
+                "切换需要先关闭 " + name + "，再写入新账号并重新打开。现在关闭吗？正在进行的对话或任务会被中断。")) { return (null, true); }
             var status = StatusText;
             StatusText = "正在关闭" + name + " …";
             var daemonRunning = await Task.Run(async () =>
@@ -598,9 +619,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
                 return desktop.IsRunning();
             }).ConfigureAwait(true);
             StatusText = status;
-            return new(name, ConfirmRestart: false, Restart: daemonRunning, ShareProjects: true);
+            return (new(name, ConfirmRestart: false, Restart: daemonRunning, ShareProjects: true), false);
         }
-        return new(name, ConfirmRestart: false, Restart: false, ShareProjects: true);
+        return (new(name, ConfirmRestart: false, Restart: false, ShareProjects: true), false);
     }
 
     /// <summary>After a manual switch: shares local projects while stopped, then starts the app or restarts its daemon.</summary>

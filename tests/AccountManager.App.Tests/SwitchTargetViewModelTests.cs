@@ -11,7 +11,10 @@ using AccountManager.Core.Dsh;
 using AccountManager.Core.Logging;
 using AccountManager.Core.OpenCode;
 using AccountManager.Core.Security;
+using AccountManager.Core.Quota;
+using AccountManager.Core.Sharing;
 using Avalonia.Headless.XUnit;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace AccountManager.App.Tests;
@@ -69,14 +72,15 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         return (services, new MainWindowViewModel(services, dialogs, startBackgroundWork: false, settingsStore: new SettingsStore(_settingsPath)), dialogs);
     }
 
-    private static string Jwt(string email, string accountId, long exp = 4102444800L)
+    private static string Jwt(string email, string accountId, long exp = 4102444800L, string plan = "plus", long? iat = null)
     {
         var claims = new JsonObject
         {
             ["exp"] = exp,
-            ["https://api.openai.com/auth"] = new JsonObject { ["chatgpt_account_id"] = accountId, ["chatgpt_plan_type"] = "plus" },
+            ["https://api.openai.com/auth"] = new JsonObject { ["chatgpt_account_id"] = accountId, ["chatgpt_plan_type"] = plan },
             ["https://api.openai.com/profile"] = new JsonObject { ["email"] = email },
         };
+        if (iat is not null) { claims["iat"] = iat; }
         return "eyJhbGciOiJub25lIn0." + Convert.ToBase64String(Encoding.UTF8.GetBytes(claims.ToJsonString())).TrimEnd('=').Replace('+', '-').Replace('/', '_') + ".sig";
     }
 
@@ -665,6 +669,133 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     // ---- fakes ------------------------------------------------------------------
+
+    private void WriteThreads()
+    {
+        using var connection = OpenThreads();
+        using var command = connection.CreateCommand();
+        command.CommandText = "CREATE TABLE threads (model_provider TEXT); INSERT INTO threads VALUES ('openai'), ('ai-account-manager'), ('api-legacy'), ('foreign')";
+        command.ExecuteNonQuery();
+    }
+
+    private SqliteConnection OpenThreads()
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(CodexHome, "state_5.sqlite"), Pooling = false,
+        }.ToString());
+        connection.Open();
+        return connection;
+    }
+
+    private string[] ThreadProviders()
+    {
+        using var connection = OpenThreads();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT model_provider FROM threads ORDER BY rowid";
+        using var reader = command.ExecuteReader();
+        var providers = new List<string>();
+        while (reader.Read()) { providers.Add(reader.GetString(0)); }
+        return providers.ToArray();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CodexProviderSwitchRetagsThreadsAfterStoppingAndBeforeStarting(bool api)
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        var apiId = await AddSwitchRowAsync(services, api: true);
+        var targetId = api ? apiId : await AddSwitchRowAsync(services, api: false);
+        if (!api)
+        {
+            var provider = (await services.Backend.GetCredentialsAsync()).Single(c => c!["id"]!.GetValue<string>() == apiId)!["integrationID"]!.GetValue<string>();
+            services.CodexApi.Use(provider);
+        }
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        services.Settings.SharedCodexApis.Add("api-legacy");
+        WriteThreads();
+        _desktop.Installed = true;
+        _desktop.Running = true;
+        var target = api ? CodexApiConfig.ProviderId : "openai";
+        _desktop.OnStop = () => Assert.Equal(new[] { "openai", CodexApiConfig.ProviderId, "api-legacy", "foreign" }, ThreadProviders());
+        _desktop.OnStart = () => Assert.Equal(new[] { target, target, target, "foreign" }, ThreadProviders());
+
+        await vm.SwitchAsync(Row(vm, targetId));
+
+        Assert.Empty(dialogs.Warnings);
+        Assert.Equal(1, _desktop.Stops);
+        Assert.Equal(1, _desktop.Starts);
+        Assert.Equal(new[] { target, target, target, "foreign" }, ThreadProviders());
+        Assert.True(File.Exists(Path.Combine(CodexHome, "state_5.sqlite.ai-account-manager.bak")));
+        Assert.Contains("已让 2 条 Codex 对话在当前账号/API 下可见", File.ReadAllText(services.Log.RunLogPath));
+    }
+
+    [AvaloniaFact]
+    public async Task DecliningTheDesktopStopSkipsThreadEditsOnlyOnWindows()
+    {
+        var (services, vm, dialogs) = NewVm(confirm: false);
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        var apiId = await AddSwitchRowAsync(services, api: true);
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        services.Settings.SharedCodexApis.Add("api-legacy");
+        WriteThreads();
+        _desktop.Running = true;
+        _desktop.Installed = true;
+
+        await vm.SwitchAsync(Row(vm, apiId));
+
+        Assert.Single(dialogs.Confirms);
+        Assert.Equal(0, _desktop.Stops);
+        Assert.Equal(0, _desktop.Starts);
+        Assert.Equal(OperatingSystem.IsWindows()
+            ? new[] { "openai", CodexApiConfig.ProviderId, "api-legacy", "foreign" }
+            : new[] { CodexApiConfig.ProviderId, CodexApiConfig.ProviderId, CodexApiConfig.ProviderId, "foreign" }, ThreadProviders());
+        var log = File.ReadAllText(services.Log.RunLogPath);
+        Assert.Equal(!OperatingSystem.IsWindows(), log.Contains("条 Codex 对话在当前账号/API 下可见", StringComparison.Ordinal));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void QuotaResultsUpdatePlanLabelsAndCachedResultsRespectNewerTokens(bool newerToken)
+    {
+        var (_, vm, _) = NewVm();
+        var observed = DateTimeOffset.Parse("2026-10-08T12:00:00Z");
+        var value = Value("a@example.test", "acct-1", "synthetic-refresh");
+        value["access"] = Jwt("a@example.test", "acct-1", plan: "self_serve_business_prolite", iat: observed.AddSeconds(newerToken ? 1 : -1).ToUnixTimeSeconds());
+        var row = new AccountRowViewModel(new AccountRow
+        {
+            Kind = AccountKind.Codex, AccountId = "acct-1", Plan = "self_serve_business_prolite", Value = value,
+        }, vm);
+        var background = row.PlanBackground;
+        var foreground = row.PlanForeground;
+        var changed = new List<string>();
+        row.PropertyChanged += (_, e) => changed.Add(e.PropertyName!);
+        var result = new AccountQuotaResult
+        {
+            State = QuotaResultState.Success, CheckedAt = observed, Usage = new QuotaUsage { Plan = "team" },
+        };
+
+        var apply = typeof(MainWindowViewModel).GetMethod("ApplyQuota", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        apply.Invoke(vm, new object[] { row, result, newerToken });
+
+        Assert.Equal(newerToken ? "self_serve_business_prolite" : "team", row.Row.Plan);
+        Assert.Equal(newerToken ? "team 高级" : "team", row.PlanText);
+        if (row.PlanText != row.Row.Plan) { Assert.Contains(row.Row.Plan, row.PlanTooltip); } // the raw type shows only when the label differs
+        if (!newerToken)
+        {
+            Assert.Contains(nameof(AccountRowViewModel.PlanText), changed);
+            Assert.Contains(nameof(AccountRowViewModel.PlanTooltip), changed);
+        }
+        Assert.Same(background, row.PlanBackground);
+        Assert.Same(foreground, row.PlanForeground);
+    }
 
     private sealed class FakeCodexDesktop : ICodexDesktopApp
     {

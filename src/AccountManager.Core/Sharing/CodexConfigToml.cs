@@ -4,9 +4,8 @@ using System.Text.RegularExpressions;
 namespace AccountManager.Core.Sharing;
 
 /// <summary>
-/// A minimal line editor for Codex's <c>config.toml</c>. It only ever touches whole <c>[table.&lt;id&gt;]</c> tables of
-/// the ids it is given and the top-level keys it is told about. Every other line, comment and blank line stays exactly
-/// as it was.
+/// A minimal line editor for Codex's <c>config.toml</c>. It edits the shared provider table, known legacy tables and
+/// explicitly selected top-level keys. Every other line, comment and blank line stays exactly as it was.
 /// </summary>
 public sealed class CodexConfigToml
 {

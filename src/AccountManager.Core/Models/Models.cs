@@ -38,6 +38,9 @@ public sealed class AccountRow
 
     public string Plan { get; set; } = string.Empty;
 
+    /// <summary>Observation time of a live plan selected over the token claim.</summary>
+    public DateTimeOffset? PlanObservedAt { get; set; }
+
     public string Expires { get; set; } = string.Empty;
 
     /// <summary>ChatGPT subscription expiry, if the source data provided it (else null).</summary>

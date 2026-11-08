@@ -14,8 +14,7 @@ public sealed record SharedApi(string Id, string Name, string BaseUrl, bool Uses
 public sealed record SharedModel(string Id, string Name, JsonArray? Variants);
 
 /// <summary>
-/// Which provider ids this program has written into each program. Only those are ever removed again, so providers the
-/// user (or the OpenCode account manager) put there with the same id pattern stay.
+/// Managed dsh API ids available to each program. Previous Codex ids also identify legacy per-API tables to remove.
 /// </summary>
 public sealed record SharedState(IReadOnlyCollection<string> OpenCode, IReadOnlyCollection<string> Codex)
 {
@@ -152,38 +151,13 @@ public sealed class ApiShareService
         if (!_codex.Available) { return (previous, false); }
         var wanted = apis.Where(a => a.UsesResponses && a.Models.Count > 0 && CodexApiConfig.CanUse(a.Id)).ToList();
         var wantedIds = wanted.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
-        var models = wanted.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Models.Select(m => m.Id).ToList(), StringComparer.Ordinal);
         var ours = previous.Concat(wantedIds).ToHashSet(StringComparer.Ordinal);
         var state = _codex.LoadState();
-        var changed = _codex.Update(toml =>
-        {
-            var edited = false;
-            foreach (var api in wanted)
-            {
-                edited |= toml.SetTable(CodexConfigToml.ProvidersTable, api.Id, new[]
-                {
-                    Pair("name", api.Name),
-                    Pair("base_url", api.BaseUrl.TrimEnd('/')),
-                    Pair("wire_api", "responses"),
-                    Pair("experimental_bearer_token", api.Key),
-                });
-            }
-
-            // Also moves Codex off an API that is gone, and drops what 0.2.0 wrote (profile / [profiles.<id>]).
-            edited |= CodexApiConfig.Migrate(toml, ours, models, state);
-            foreach (var gone in previous.Where(id => !wantedIds.Contains(id)))
-            {
-                edited |= toml.SetTable(CodexConfigToml.ProvidersTable, gone, null);
-            }
-
-            return edited;
-        });
+        var changed = _codex.Update(toml => CodexApiConfig.Migrate(toml, ours, wanted, state));
         _codex.SaveState(state);
         if (changed) { _log?.Info("已把 API 同步到 Codex 的 config.toml（" + wanted.Count + " 个）"); }
         return (wantedIds.ToList(), changed);
     }
-
-    private static KeyValuePair<string, string> Pair(string key, string value) => new(key, value);
 
     // ---- OpenCode ------------------------------------------------------------
 

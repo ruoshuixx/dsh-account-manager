@@ -19,14 +19,17 @@ public sealed class AccountQuotaSelector
     private readonly SecretRegistry _secrets;
     private readonly Logging.AppLog? _log;
     private readonly SubscriptionRefresher? _subscriptions;
+    private readonly SubscriptionStore? _store;
 
-    public AccountQuotaSelector(IAccountBackend api, QuotaService quota, Security.SecretRegistry secrets, Logging.AppLog? log = null, SubscriptionRefresher? subscriptions = null)
+    public AccountQuotaSelector(IAccountBackend api, QuotaService quota, Security.SecretRegistry secrets, Logging.AppLog? log = null,
+        SubscriptionRefresher? subscriptions = null, SubscriptionStore? store = null)
     {
         _api = api;
         _quota = quota;
         _secrets = secrets;
         _log = log;
         _subscriptions = subscriptions;
+        _store = store;
     }
 
     public static string RowKey(AccountRow? row)
@@ -60,7 +63,14 @@ public sealed class AccountQuotaSelector
             return Error(key, safe, checkedAt);
         }
 
+        checkedAt = DateTimeOffset.Now;
         var classified = Classify(key, usage, checkedAt);
+        if (_store is not null && usage is not null && !string.IsNullOrWhiteSpace(usage.Plan))
+        {
+            try { await _store.UpdatePlanAsync(row.AccountId, row.Email, usage.Plan, checkedAt, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { _log?.Warn("写回套餐缓存失败（不影响账号）：" + _secrets.Redact(ex.Message)); }
+        }
         await AttachSubscriptionAsync(classified, row, token, checkedAt, forceSubscription, cancellationToken).ConfigureAwait(false);
         return classified;
     }

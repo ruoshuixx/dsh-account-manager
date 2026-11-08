@@ -66,7 +66,7 @@ public sealed class AppServices : IAddAccountServices
         Quota = new QuotaService();
         Subscription = new SubscriptionService();
         SubscriptionRefresher = new SubscriptionRefresher(Subscription, Log);
-        QuotaSelector = new AccountQuotaSelector(Backend, Quota, Secrets, Log, SubscriptionRefresher);
+        QuotaSelector = new AccountQuotaSelector(Backend, Quota, Secrets, Log, SubscriptionRefresher, Subscriptions);
         ResetCredits = new ResetCreditService();
         Reset = new AccountResetService(Backend, ResetCredits, QuotaSelector, Secrets, Log);
 

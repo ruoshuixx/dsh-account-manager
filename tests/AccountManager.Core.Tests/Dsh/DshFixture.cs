@@ -15,7 +15,7 @@ namespace AccountManager.Core.Tests;
 /// <summary>Synthetic accounts and tokens; nothing here is real.</summary>
 internal static class TestAccounts
 {
-    public static string AccessToken(string email, string accountId = "acct-1", long exp = 4102444800L, string plan = "plus")
+    public static string AccessToken(string email, string accountId = "acct-1", long exp = 4102444800L, string plan = "plus", long? iat = null)
     {
         var claims = new JsonObject
         {
@@ -23,6 +23,7 @@ internal static class TestAccounts
             ["https://api.openai.com/auth"] = new JsonObject { ["chatgpt_account_id"] = accountId, ["chatgpt_plan_type"] = plan },
             ["https://api.openai.com/profile"] = new JsonObject { ["email"] = email },
         };
+        if (iat is not null) { claims["iat"] = iat; }
         return "eyJhbGciOiJub25lIn0." + Convert.ToBase64String(Encoding.UTF8.GetBytes(claims.ToJsonString())).TrimEnd('=').Replace('+', '-').Replace('/', '_') + ".sig";
     }
 

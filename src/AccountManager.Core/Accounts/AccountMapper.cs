@@ -20,7 +20,8 @@ public sealed class AccountMapper
 
     public string Mask(string text) => _secrets.Redact(text);
 
-    public AccountRow ConvertCredential(JsonNode? credential, IReadOnlyDictionary<string, string>? subscriptionFallback = null)
+    public AccountRow ConvertCredential(JsonNode? credential, IReadOnlyDictionary<string, string>? subscriptionFallback = null,
+        IReadOnlyDictionary<string, SubscriptionRecord>? livePlans = null)
     {
         if (credential is null) { throw new InvalidOperationException("凭据为空，无法映射账号。"); }
         var id = JsonMerge.GetString(credential, "id");
@@ -49,6 +50,14 @@ public sealed class AccountMapper
         {
             var metadata = JsonMerge.Get(value, "metadata");
             plan = JsonMerge.GetString(metadata, "planType") ?? JsonMerge.GetString(metadata, "plan") ?? string.Empty;
+        }
+
+        DateTimeOffset? planObservedAt = null;
+        if (livePlans?.TryGetValue(info.Identity, out var stored) == true && !string.IsNullOrWhiteSpace(stored.PlanType)
+            && stored.PlanObservedAt is { } observed && IsPlanObservationCurrent(value, observed))
+        {
+            plan = stored.PlanType.Trim();
+            planObservedAt = observed;
         }
 
         var expiry = CredentialHelpers.GetTokenExpiryMs(value);
@@ -83,6 +92,7 @@ public sealed class AccountMapper
             Identity = info.Identity,
             Workspace = workspace,
             Plan = plan,
+            PlanObservedAt = planObservedAt,
             Expires = expiresText,
             Status = status,
             StatusCode = statusCode,
@@ -91,6 +101,14 @@ public sealed class AccountMapper
             SubscriptionExpires = ResolveSubscription(GetSubscriptionExpiry(value), info.Identity, subscriptionFallback),
             Value = value.DeepClone() as JsonObject,
         };
+    }
+
+    /// <summary>A newer access token supersedes an older plan observation; tokens without iat use the observation.</summary>
+    public static bool IsPlanObservationCurrent(JsonNode? value, DateTimeOffset observedAt)
+    {
+        var claims = Jwt.ReadPayload(JsonMerge.GetString(value, "access"));
+        var issuedAt = JsonNum.ToNumber(JsonMerge.Get(claims, "iat"));
+        return issuedAt is null || observedAt.ToUnixTimeMilliseconds() / 1000d > issuedAt;
     }
 
     private static readonly string[] SubscriptionFields =
@@ -286,7 +304,8 @@ public sealed class AccountMapper
     }
 
     /// <summary>GET /api/credential -> Codex accounts (skips unmappable ones).</summary>
-    public List<AccountRow> GetManagedAccounts(JsonArray credentials, IReadOnlyDictionary<string, string>? subscriptionFallback = null)
+    public List<AccountRow> GetManagedAccounts(JsonArray credentials, IReadOnlyDictionary<string, string>? subscriptionFallback = null,
+        IReadOnlyDictionary<string, SubscriptionRecord>? livePlans = null)
     {
         _secrets.Register(credentials);
         var accounts = new List<AccountRow>();
@@ -300,7 +319,7 @@ public sealed class AccountMapper
             if (!CredentialHelpers.IsCodexOAuthMethod(JsonMerge.GetString(value, "methodID"))) { continue; }
             try
             {
-                accounts.Add(ConvertCredential(credential, subscriptionFallback));
+                accounts.Add(ConvertCredential(credential, subscriptionFallback, livePlans));
             }
             catch (Exception ex)
             {

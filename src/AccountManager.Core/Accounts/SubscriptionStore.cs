@@ -32,6 +32,9 @@ public sealed class SubscriptionRecord
 
     public string? PlanType { get; init; }
 
+    /// <summary>When the usage API last reported this plan; absent in imported and legacy records.</summary>
+    public DateTimeOffset? PlanObservedAt { get; init; }
+
     public string Source { get; init; } = string.Empty;
 
     public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
@@ -69,6 +72,7 @@ public sealed class SubscriptionStore
 
     private readonly Func<CancellationToken, Task<string>> _directoryProvider;
     private readonly AppLog? _log;
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     /// <summary>Stores the mirror in a fixed directory (the app data directory, next to the account vault).</summary>
     public SubscriptionStore(string directory, AppLog? log = null)
@@ -241,10 +245,25 @@ public sealed class SubscriptionStore
         var updates = records.Where(r => !string.IsNullOrWhiteSpace(r.Identity)).ToList();
         if (updates.Count == 0) { return; }
 
-        var existing = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var existing = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            await SaveCoreAsync(updates, existing, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    private async Task SaveCoreAsync(IEnumerable<SubscriptionRecord> updates, Dictionary<string, SubscriptionRecord> existing, CancellationToken cancellationToken)
+    {
         foreach (var item in updates)
         {
             var record = item;
+            if (existing.TryGetValue(record.Identity, out var previous) && previous.PlanObservedAt is { } observed
+                && (record.PlanObservedAt is null || record.PlanObservedAt < observed))
+            {
+                record = CopyWithPlan(record, previous.PlanType, observed);
+            }
             // Keep previously sealed secrets when the caller only refreshes metadata.
             if (record.SealedSecrets is null && existing.TryGetValue(record.Identity, out var prior))
             {
@@ -278,108 +297,85 @@ public sealed class SubscriptionStore
         }
     }
 
-    /// <summary>
-    /// Updates only the cached subscription expiry for one account (used after a live lookup),
-    /// preserving every other field and the sealed secrets. Creates a minimal record when none
-    /// exists yet.
-    /// </summary>
-    public async Task UpdateActiveUntilAsync(string accountId, string email, DateTimeOffset activeUntil, CancellationToken cancellationToken = default)
+    /// <summary>Updates a live expiry without changing the cached plan or sealed account data.</summary>
+    public Task UpdateActiveUntilAsync(string accountId, string email, DateTimeOffset activeUntil, CancellationToken cancellationToken = default)
+        => UpdateSubscriptionAsync(accountId, email, activeUntil, cancellationToken);
+
+    /// <summary>Records an authoritative absence of a subscription expiry, preserving all other fields.</summary>
+    public Task ClearActiveUntilAsync(string accountId, string email, CancellationToken cancellationToken = default)
+        => UpdateSubscriptionAsync(accountId, email, null, cancellationToken);
+
+    private async Task UpdateSubscriptionAsync(string accountId, string email, DateTimeOffset? activeUntil, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(accountId)) { return; }
-
-        var identity = IdentityOf(accountId, email);
-        var text = activeUntil.ToUniversalTime().ToString("O");
-        var existing = await LoadAsync(cancellationToken).ConfigureAwait(false);
-
-        SubscriptionRecord record;
-        if (existing.TryGetValue(identity, out var prior))
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            JsonObject? cockpit = null;
-            if (prior.Cockpit is not null)
-            {
-                cockpit = (JsonObject)prior.Cockpit.DeepClone();
-                cockpit["subscription_active_until"] = text;
-            }
-
-            record = new SubscriptionRecord
-            {
-                AccountId = prior.AccountId,
-                Email = prior.Email,
-                ActiveUntil = text,
-                PlanType = prior.PlanType,
-                Source = prior.Source,
-                UpdatedAt = DateTimeOffset.UtcNow,
-                Authoritative = true,
-                Cockpit = cockpit,
-                CockpitMirrorInvalid = prior.CockpitMirrorInvalid,
-            };
-        }
-        else
-        {
-            record = new SubscriptionRecord
+            var existing = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            existing.TryGetValue(IdentityOf(accountId, email), out var prior);
+            var text = activeUntil?.ToUniversalTime().ToString("O");
+            var cockpit = prior?.Cockpit?.DeepClone() as JsonObject;
+            if (cockpit is not null) { cockpit["subscription_active_until"] = text; }
+            var record = new SubscriptionRecord
             {
                 AccountId = accountId,
                 Email = email,
                 ActiveUntil = text,
-                Source = "live",
-                UpdatedAt = DateTimeOffset.UtcNow,
-                Authoritative = true,
-            };
-        }
-
-        await SaveAsync(new[] { record }, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Records that a live lookup ran and found <em>no</em> subscription expiry. The empty marker is
-    /// authoritative: the mapper must not fall back to an older credential-metadata date, so the row
-    /// shows "—" instead of a value that no longer applies. Everything else is preserved.
-    /// </summary>
-    public async Task ClearActiveUntilAsync(string accountId, string email, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(accountId)) { return; }
-
-        var identity = IdentityOf(accountId, email);
-        var existing = await LoadAsync(cancellationToken).ConfigureAwait(false);
-
-        SubscriptionRecord record;
-        if (existing.TryGetValue(identity, out var prior))
-        {
-            JsonObject? cockpit = null;
-            if (prior.Cockpit is not null)
-            {
-                cockpit = (JsonObject)prior.Cockpit.DeepClone();
-                cockpit["subscription_active_until"] = null;
-            }
-
-            record = new SubscriptionRecord
-            {
-                AccountId = prior.AccountId,
-                Email = prior.Email,
-                ActiveUntil = null,
-                PlanType = prior.PlanType,
-                Source = prior.Source,
+                PlanType = prior?.PlanType,
+                PlanObservedAt = prior?.PlanObservedAt,
+                Source = prior?.Source ?? "live",
                 UpdatedAt = DateTimeOffset.UtcNow,
                 Authoritative = true,
                 Cockpit = cockpit,
-                CockpitMirrorInvalid = prior.CockpitMirrorInvalid,
+                CockpitMirrorInvalid = prior?.CockpitMirrorInvalid ?? false,
             };
+            await SaveCoreAsync(new[] { record }, existing, cancellationToken).ConfigureAwait(false);
         }
-        else
+        finally { _writeGate.Release(); }
+    }
+
+    /// <summary>Stores the plan from an existing quota response without making any network request.</summary>
+    public async Task UpdatePlanAsync(string accountId, string email, string plan, DateTimeOffset observedAt, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(accountId) || string.IsNullOrWhiteSpace(plan)) { return; }
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            record = new SubscriptionRecord
+            var existing = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            existing.TryGetValue(IdentityOf(accountId, email), out var prior);
+            if (prior?.PlanObservedAt > observedAt) { return; }
+            var record = new SubscriptionRecord
             {
                 AccountId = accountId,
                 Email = email,
-                ActiveUntil = null,
-                Source = "live",
+                ActiveUntil = prior?.ActiveUntil,
+                Authoritative = prior?.Authoritative ?? false,
+                PlanType = plan.Trim(),
+                PlanObservedAt = observedAt,
+                Source = prior?.Source ?? "quota",
                 UpdatedAt = DateTimeOffset.UtcNow,
-                Authoritative = true,
+                Cockpit = prior?.Cockpit,
+                CockpitMirrorInvalid = prior?.CockpitMirrorInvalid ?? false,
             };
+            await SaveCoreAsync(new[] { record }, existing, cancellationToken).ConfigureAwait(false);
         }
-
-        await SaveAsync(new[] { record }, cancellationToken).ConfigureAwait(false);
+        finally { _writeGate.Release(); }
     }
+
+    private static SubscriptionRecord CopyWithPlan(SubscriptionRecord record, string? plan, DateTimeOffset observedAt) => new()
+    {
+        AccountId = record.AccountId,
+        Email = record.Email,
+        ActiveUntil = record.ActiveUntil,
+        Authoritative = record.Authoritative,
+        PlanType = plan,
+        PlanObservedAt = observedAt,
+        Source = record.Source,
+        UpdatedAt = record.UpdatedAt,
+        Cockpit = record.Cockpit,
+        SealedSecrets = record.SealedSecrets,
+        CockpitMirrorInvalid = record.CockpitMirrorInvalid,
+    };
 
     private static SubscriptionRecord CopyWithSecrets(SubscriptionRecord record, string? sealedSecrets, bool priorInvalid = false) => new()
     {
@@ -388,6 +384,7 @@ public sealed class SubscriptionStore
         ActiveUntil = record.ActiveUntil,
         Authoritative = record.Authoritative,
         PlanType = record.PlanType,
+        PlanObservedAt = record.PlanObservedAt,
         Source = record.Source,
         UpdatedAt = record.UpdatedAt,
         Cockpit = record.Cockpit,
@@ -461,6 +458,7 @@ public sealed class SubscriptionStore
                 ActiveUntil = activeUntil,
                 Authoritative = JsonNum.ToBool(JsonMerge.Get(o, "subscriptionAuthoritative")),
                 PlanType = JsonMerge.GetString(o, "planType") ?? JsonMerge.GetString(cockpit, "plan_type"),
+                PlanObservedAt = Quota.QuotaService.ConvertResetTime(JsonMerge.Get(o, "planObservedAt")),
                 Source = JsonMerge.GetString(o, "source") ?? string.Empty,
                 Cockpit = cockpit,
                 SealedSecrets = sealedSecrets,
@@ -487,6 +485,7 @@ public sealed class SubscriptionStore
                 ["source"] = safeRecord.Source,
                 ["updatedAt"] = safeRecord.UpdatedAt.ToUniversalTime().ToString("O"),
             };
+            if (safeRecord.PlanObservedAt is { } observed) { entry["planObservedAt"] = observed.ToUniversalTime().ToString("O"); }
             if (safeRecord.Authoritative) { entry["subscriptionAuthoritative"] = true; }
             if (safeRecord.Cockpit is not null) { entry["cockpit"] = safeRecord.Cockpit.DeepClone(); }
             if (!string.IsNullOrWhiteSpace(safeRecord.SealedSecrets)) { entry["secrets"] = safeRecord.SealedSecrets; }
@@ -535,6 +534,7 @@ public sealed class SubscriptionStore
         ActiveUntil = record.ActiveUntil,
         Authoritative = record.Authoritative,
         PlanType = record.PlanType,
+        PlanObservedAt = record.PlanObservedAt,
         Source = record.Source,
         UpdatedAt = record.UpdatedAt,
         Cockpit = cockpit,

@@ -248,6 +248,18 @@ public sealed partial class AccountRowViewModel : ObservableObject
 
     public string PlanText => PlanNames.Display(Row.Plan);
 
+    /// <summary>Applies a usage-API plan without changing the workspace-based badge colour.</summary>
+    public void ApplyLivePlan(string plan, DateTimeOffset observedAt)
+    {
+        if (!IsCodex || string.IsNullOrWhiteSpace(plan) || Row.PlanObservedAt > observedAt
+            || !AccountMapper.IsPlanObservationCurrent(Row.Value, observedAt)) { return; }
+        Row.PlanObservedAt = observedAt;
+        if (Row.Plan == plan.Trim()) { return; }
+        Row.Plan = plan.Trim();
+        OnPropertyChanged(nameof(PlanText));
+        OnPropertyChanged(nameof(PlanTooltip));
+    }
+
     /// <summary>Raw plan type on hover when the badge shows a short name.</summary>
     public string PlanTooltip => PlanText == (Row.Plan ?? string.Empty).Trim() || string.IsNullOrWhiteSpace(Row.Plan)
         ? SubscriptionTooltip

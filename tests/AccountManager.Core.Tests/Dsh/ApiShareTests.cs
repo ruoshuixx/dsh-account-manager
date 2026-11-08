@@ -88,11 +88,11 @@ public class ApiShareTests
         Assert.Equal("fake-key-c", key["value"]!["key"]!.GetValue<string>());
         Assert.True(key["active"]!.GetValue<bool>());
 
-        // Codex: a provider table for the Responses API only, no profiles; nothing selected yet.
+        // Codex: only the private catalog is populated until an API is selected.
         var toml = f.CodexApi.Read();
-        Assert.Equal("https://ark.example.test/api/v3", toml.GetValue(CodexConfigToml.ProvidersTable, Responses, "base_url"));
-        Assert.Equal("responses", toml.GetValue(CodexConfigToml.ProvidersTable, Responses, "wire_api"));
-        Assert.Equal("fake-key-r", toml.GetValue(CodexConfigToml.ProvidersTable, Responses, "experimental_bearer_token"));
+        Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, Responses));
+        Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId));
+        Assert.Equal(new[] { "m-r1", "m-r2" }, f.CodexApi.LoadState()["catalog"]![Responses]!.AsArray().Select(n => n!.GetValue<string>()));
         Assert.False(toml.HasTable("profiles", Responses));
         Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, Chat));
         Assert.Null(toml.Profile);
@@ -105,14 +105,14 @@ public class ApiShareTests
     {
         using var f = await SetupAsync();
         var first = await f.Share.SyncAsync(SharedState.Empty);
-        var toml = File.ReadAllText(f.CodexConfigPath);
+        var toml = f.CodexApi.ReadText();
         var writes = f.OpenCodeConfig.Writes;
         var calls = f.OpenCodeApi.Calls.Count;
 
         var second = await f.Share.SyncAsync(first.State);
 
         Assert.False(second.Changed);
-        Assert.Equal(toml, File.ReadAllText(f.CodexConfigPath));
+        Assert.Equal(toml, f.CodexApi.ReadText());
         Assert.Equal(writes, f.OpenCodeConfig.Writes);
         Assert.Equal(calls, f.OpenCodeApi.Calls.Count);
     }
@@ -122,13 +122,19 @@ public class ApiShareTests
     {
         using var f = await SetupAsync();
         var first = await f.Share.SyncAsync(SharedState.Empty);
-        await f.Backend.WriteApiProviderAsync(Responses, View("Ark", OpenAiApiProtocol.ResponsesPackage, "https://ark.example.test/api/v3", "m-r1", "m-r2"), "fake-key-r2");
+        f.CodexApi.Use(Responses);
+        await f.Backend.WriteApiProviderAsync(Responses, View("Renamed", OpenAiApiProtocol.ResponsesPackage, "https://new.example.test/v1/", "m-r1", "m-r2"), "fake-key-r2");
 
         await f.Share.SyncAsync(first.State);
 
         var key = Assert.Single(f.OpenCodeApi.Credentials, c => c["integrationID"]!.GetValue<string>() == Responses);
         Assert.Equal("fake-key-r2", key["value"]!["key"]!.GetValue<string>());
-        Assert.Equal("fake-key-r2", f.CodexApi.Read().GetValue(CodexConfigToml.ProvidersTable, Responses, "experimental_bearer_token"));
+        var toml = f.CodexApi.Read();
+        Assert.Equal("fake-key-r2", toml.GetValue(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId, "experimental_bearer_token"));
+        Assert.Equal("Renamed", toml.GetValue(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId, "name"));
+        Assert.Equal("https://new.example.test/v1", toml.GetValue(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId, "base_url"));
+        Assert.Equal("responses", toml.GetValue(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId, "wire_api"));
+        Assert.Equal(Responses, f.CodexApi.CurrentApi());
     }
 
     [Fact]
@@ -153,6 +159,7 @@ public class ApiShareTests
         Assert.Contains(f.OpenCodeApi.Credentials, c => c["integrationID"]!.GetValue<string>() == foreign);
         var toml = f.CodexApi.Read();
         Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, Responses));
+        Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId));
         Assert.True(toml.HasTable(CodexConfigToml.ProvidersTable, foreign));
         Assert.Null(toml.GetTop("model_provider")); // back to the ChatGPT login
     }
@@ -210,7 +217,7 @@ public class ApiShareTests
 
         Assert.True(f.CodexApi.Use(Responses));
         var toml = f.CodexApi.Read();
-        Assert.Equal(Responses, toml.GetTop("model_provider"));
+        Assert.Equal(CodexApiConfig.ProviderId, toml.GetTop("model_provider"));
         Assert.Equal("m-r1", toml.GetTop("model"));
         Assert.Null(toml.Profile); // never the legacy selector
         Assert.Equal("high", toml.GetTop("model_reasoning_effort"));
@@ -221,6 +228,7 @@ public class ApiShareTests
         toml = f.CodexApi.Read();
         Assert.Null(toml.GetTop("model_provider"));
         Assert.Equal("gpt-6.1-sol", toml.GetTop("model"));
+        Assert.False(toml.HasTable(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId));
 
         f.CodexApi.Use(Responses);
         Assert.Equal("m-r2", f.CodexApi.Read().GetTop("model"));
@@ -232,7 +240,7 @@ public class ApiShareTests
         using var f = await SetupAsync();
         var first = await f.Share.SyncAsync(SharedState.Empty);
         // 0.2.0: a profile table per API and the top-level selector Codex 0.134+ refuses.
-        File.WriteAllText(f.CodexConfigPath, "profile = \"" + Responses + "\"\n\n" + File.ReadAllText(f.CodexConfigPath)
+        File.WriteAllText(f.CodexConfigPath, "profile = \"" + Responses + "\"\n\n"
             + "\n[profiles." + Responses + "]\nmodel_provider = \"" + Responses + "\"\nmodel = \"m-r2\"\n");
 
         await f.Share.SyncAsync(first.State);
@@ -240,10 +248,90 @@ public class ApiShareTests
         var toml = f.CodexApi.Read();
         Assert.Null(toml.Profile);
         Assert.False(toml.HasTable("profiles", Responses));
-        Assert.Equal(Responses, toml.GetTop("model_provider")); // still on the API it had chosen ...
+        Assert.Equal(CodexApiConfig.ProviderId, toml.GetTop("model_provider")); // still on the API it had chosen ...
+        Assert.Equal(Responses, f.CodexApi.CurrentApi());
         Assert.Equal("m-r2", toml.GetTop("model"));             // ... with its model
         Assert.True(f.CodexApi.LeaveApi());
         Assert.Null(f.CodexApi.Read().GetTop("model_provider"));
+    }
+
+    [Fact]
+    public async Task AllApisUseOneTableAndRememberTheirOwnModels()
+    {
+        using var f = await SetupAsync();
+        const string second = "api-second";
+        await f.Backend.WriteApiProviderAsync(second, View("Second", OpenAiApiProtocol.ResponsesPackage, "https://second.example.test/v1", "s1", "s2"), "fake-second-key");
+        File.WriteAllText(f.CodexConfigPath, "model_provider = \"user-provider\"\nmodel = \"user-model\"\n\n[model_providers.user-provider]\nname = \"Mine\"\n");
+        var sync = await f.Share.SyncAsync(SharedState.Empty);
+        Assert.Equal(new[] { Responses, second }.OrderBy(x => x), sync.State.Codex.OrderBy(x => x));
+
+        Assert.True(f.CodexApi.Use(Responses));
+        f.CodexApi.Update(t => t.SetTop("model", "m-r2"));
+        Assert.True(f.CodexApi.Use(second));
+        Assert.Equal("s1", f.CodexApi.Read().GetTop("model"));
+        Assert.Equal(second, f.CodexApi.LoadState()["api"]!.GetValue<string>());
+        f.CodexApi.Update(t => t.SetTop("model", "s2"));
+        Assert.True(f.CodexApi.Use(Responses));
+        Assert.Equal("m-r2", f.CodexApi.Read().GetTop("model"));
+        Assert.True(f.CodexApi.Use(second));
+        Assert.Equal("s2", f.CodexApi.Read().GetTop("model"));
+        Assert.Equal(CodexApiConfig.ProviderId, f.CodexApi.Read().GetTop("model_provider"));
+        Assert.Equal(1, f.CodexApi.ReadText()!.Split("[model_providers." + CodexApiConfig.ProviderId + "]").Length - 1);
+        Assert.False(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, Responses));
+        Assert.False(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, second));
+        Assert.False(f.CodexApi.Use(second));
+
+        await f.Backend.RemoveApiProviderAsync(second);
+        await f.Share.SyncAsync(sync.State);
+        Assert.Equal("user-provider", f.CodexApi.Read().GetTop("model_provider"));
+        Assert.Equal("user-model", f.CodexApi.Read().GetTop("model"));
+        Assert.True(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, "user-provider"));
+        Assert.False(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId));
+        Assert.Contains(second, f.CodexApi.LegacyProviderIds);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LegacyApiSelectorsAndTablesAreMigratedWithTheModelIntact(bool hasState)
+    {
+        using var f = await SetupAsync();
+        if (hasState)
+        {
+            f.CodexApi.SaveState(new JsonObject
+            {
+                ["api"] = Responses,
+                ["before"] = new JsonObject { ["model_provider"] = "openai", ["model"] = "original-model" },
+            });
+        }
+        File.WriteAllText(f.CodexConfigPath, "model_provider = \"" + Responses + "\"\nmodel = \"legacy-model\"\n\n[model_providers."
+            + Responses + "]\nname = \"Old\"\n\n[model_providers.removed-api]\nname = \"Removed\"\n\n[model_providers.foreign]\nname = \"Mine\"\n");
+
+        var result = await f.Share.SyncAsync(new SharedState(Array.Empty<string>(), new[] { Responses, "removed-api" }));
+
+        Assert.Empty(result.Notes);
+        Assert.Equal(Responses, f.CodexApi.CurrentApi());
+        Assert.Equal(CodexApiConfig.ProviderId, f.CodexApi.Read().GetTop("model_provider"));
+        Assert.Equal("legacy-model", f.CodexApi.Read().GetTop("model"));
+        Assert.False(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, Responses));
+        Assert.False(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, "removed-api"));
+        Assert.True(f.CodexApi.Read().HasTable(CodexConfigToml.ProvidersTable, "foreign"));
+        Assert.True(f.CodexApi.LeaveApi());
+        Assert.Equal(hasState ? "openai" : null, f.CodexApi.Read().GetTop("model_provider"));
+        Assert.Equal(hasState ? "original-model" : null, f.CodexApi.Read().GetTop("model"));
+    }
+
+    [Fact]
+    public async Task CurrentApiRequiresBothOurSelectorAndTable()
+    {
+        using var f = await SetupAsync();
+        await f.Share.SyncAsync(SharedState.Empty);
+        f.CodexApi.Use(Responses);
+        Assert.Equal(Responses, f.CodexApi.CurrentApi());
+        f.CodexApi.Update(t => t.SetTop("model_provider", "openai"));
+        Assert.Null(f.CodexApi.CurrentApi());
+        f.CodexApi.Update(t => { t.SetTop("model_provider", CodexApiConfig.ProviderId); return t.SetTable(CodexConfigToml.ProvidersTable, CodexApiConfig.ProviderId, null); });
+        Assert.Null(f.CodexApi.CurrentApi());
     }
 
     [Fact]

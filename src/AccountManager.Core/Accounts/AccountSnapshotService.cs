@@ -50,11 +50,17 @@ public sealed class AccountSnapshotService
         _secrets.Register(credentials);
 
         Dictionary<string, string> subscriptionFallback = new(StringComparer.Ordinal);
+        Dictionary<string, SubscriptionRecord> subscriptions = new(StringComparer.Ordinal);
         if (_subscriptions is not null)
         {
             try
             {
-                subscriptionFallback = await _subscriptions.LoadActiveUntilAsync(cancellationToken).ConfigureAwait(false);
+                subscriptions = await _subscriptions.LoadAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var (identity, record) in subscriptions)
+                {
+                    if (record.Authoritative) { subscriptionFallback[identity] = record.ActiveUntil ?? string.Empty; }
+                    else if (!string.IsNullOrWhiteSpace(record.ActiveUntil)) { subscriptionFallback[identity] = record.ActiveUntil; }
+                }
             }
             catch (OperationCanceledException)
             {
@@ -66,7 +72,7 @@ public sealed class AccountSnapshotService
             }
         }
 
-        var accounts = _mapper.GetManagedAccounts(credentials, subscriptionFallback);
+        var accounts = _mapper.GetManagedAccounts(credentials, subscriptionFallback, subscriptions);
 
         // The "current" marker follows the selected switch target. dsh's own flag is already on the rows.
         var targetNote = string.Empty;

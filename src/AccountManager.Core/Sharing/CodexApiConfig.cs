@@ -6,16 +6,16 @@ using AccountManager.Core.Security;
 namespace AccountManager.Core.Sharing;
 
 /// <summary>
-/// The API side of Codex's <c>config.toml</c>: each shared API is a <c>[model_providers.&lt;id&gt;]</c> table, and
-/// "Codex uses this API" is the top-level <c>model_provider = "&lt;id&gt;"</c> plus <c>model</c> (Codex 0.134+ no longer
-/// accepts a top-level <c>profile</c>, and the desktop app cannot be started with <c>--profile</c>). The top-level
-/// <c>model</c> / <c>model_provider</c> the user had before, and the model last used with each API, are kept in a small
-/// state file of this program, so going back to the ChatGPT login restores them. <c>auth.json</c> is never touched here.
+/// The API side of Codex's <c>config.toml</c>: all shared APIs use one provider table. The active dsh API id,
+/// available APIs and models, and the user's original model/provider live in an owner-only state file.
+/// Switching APIs keeps Codex's provider identity stable. <c>auth.json</c> is never touched here.
 /// </summary>
 public sealed class CodexApiConfig
 {
+    public const string ProviderId = "ai-account-manager";
+
     /// <summary>Provider ids Codex reserves for its built-in providers.</summary>
-    private static readonly HashSet<string> Reserved = new(StringComparer.OrdinalIgnoreCase) { "openai", "ollama", "lmstudio" };
+    private static readonly HashSet<string> Reserved = new(StringComparer.OrdinalIgnoreCase) { "openai", "ollama", "lmstudio", ProviderId };
 
     private const string LegacyProfilesTable = "profiles";
 
@@ -50,14 +50,18 @@ public sealed class CodexApiConfig
 
     public CodexConfigToml Read() => new(ReadText());
 
-    /// <summary>The API provider id Codex currently uses (top-level <c>model_provider</c> with a provider table), or null for the ChatGPT login.</summary>
+    /// <summary>The active dsh API id, or null unless Codex selects our shared provider table.</summary>
     public string? CurrentApi()
     {
         if (!Available) { return null; }
         var toml = Read();
-        var provider = toml.GetTop("model_provider");
-        return provider is not null && CanUse(provider) && toml.HasTable(CodexConfigToml.ProvidersTable, provider) ? provider : null;
+        return toml.GetTop("model_provider") == ProviderId && toml.HasTable(CodexConfigToml.ProvidersTable, ProviderId)
+            ? Str(LoadState()["api"]) : null;
     }
+
+    /// <summary>Historical managed provider ids, retained after APIs are removed for thread migration.</summary>
+    public IReadOnlyCollection<string> LegacyProviderIds
+        => (LoadState()["legacyProviders"] as JsonArray)?.Select(Str).OfType<string>().ToArray() ?? Array.Empty<string>();
 
     /// <summary>
     /// Applies <paramref name="edit"/> to the file and writes it when the text changed: encrypted backup first, the file
@@ -81,17 +85,18 @@ public sealed class CodexApiConfig
     /// <summary>Makes Codex use this API with its remembered (else first of <paramref name="models"/>) model. Returns whether anything changed.</summary>
     public bool Use(string providerId, IReadOnlyList<string>? models = null)
     {
-        var toml = Read();
-        if (!toml.HasTable(CodexConfigToml.ProvidersTable, providerId))
+        if (!Available) { return false; }
+        var state = LoadState();
+        if (!CanUse(providerId) || state["providers"]?[providerId] is not JsonObject)
         {
             throw new DshException("该 API 还没有同步到 Codex。Codex 只支持 Responses 协议的 API；请确认协议后点“读取”再试。");
         }
 
-        var state = LoadState();
         models ??= (state["catalog"]?[providerId] as JsonArray)?.Select(Str).OfType<string>().ToList();
+        var previousApi = CurrentApi();
         var changed = Update(t => Select(t, providerId, models, state));
         SaveState(state);
-        return changed;
+        return changed || previousApi != providerId;
     }
 
     /// <summary>Back to the ChatGPT login: the user's own model / provider come back. Returns whether it changed.</summary>
@@ -105,15 +110,30 @@ public sealed class CodexApiConfig
     }
 
     /// <summary>
-    /// Edits for the share service: migrates what 0.2.0 wrote (<c>profile</c> and <c>[profiles.&lt;id&gt;]</c> of our ids)
-    /// and leaves or fixes an API that is gone or whose model is. Runs inside <see cref="Update"/>.
+    /// Migrates legacy profiles and per-API providers, and updates or leaves the active API.
+    /// Runs inside <see cref="Update"/>; inactive APIs are kept only in the private state file.
     /// </summary>
-    internal static bool Migrate(CodexConfigToml toml, IReadOnlySet<string> ours, IReadOnlyDictionary<string, IReadOnlyList<string>> models, JsonObject state)
+    internal static bool Migrate(CodexConfigToml toml, IReadOnlySet<string> ours, IReadOnlyList<SharedApi> apis, JsonObject state)
     {
-        // The shared APIs' models, for a later switch.
+        var models = apis.ToDictionary(a => a.Id, a => (IReadOnlyList<string>)a.Models.Select(m => m.Id).ToList(), StringComparer.Ordinal);
         var catalog = new JsonObject();
         foreach (var (id, list) in models) { catalog[id] = new JsonArray(list.Select(m => (JsonNode)JsonValue.Create(m)!).ToArray()); }
         state["catalog"] = catalog;
+        var providers = new JsonObject();
+        foreach (var api in apis)
+        {
+            providers[api.Id] = new JsonObject
+            {
+                ["name"] = api.Name,
+                ["base_url"] = api.BaseUrl.TrimEnd('/'),
+                ["wire_api"] = "responses",
+                ["experimental_bearer_token"] = api.Key,
+            };
+        }
+        state["providers"] = providers;
+        var legacyIds = (state["legacyProviders"] as JsonArray)?.Select(Str).OfType<string>() ?? Array.Empty<string>();
+        state["legacyProviders"] = new JsonArray(legacyIds.Concat(ours).Where(CanUse).Distinct(StringComparer.Ordinal)
+            .OrderBy(id => id, StringComparer.Ordinal).Select(id => (JsonNode)JsonValue.Create(id)!).ToArray());
 
         var edited = false;
         var legacy = toml.Profile;
@@ -132,14 +152,36 @@ public sealed class CodexApiConfig
             edited |= toml.SetTable(LegacyProfilesTable, id, null);
         }
 
-        // The API Codex uses is gone, or its model is: back to the login / a valid model.
+        // A legacy top-level selector may exist without a state file. Never restore that deleted provider later.
         var current = toml.GetTop("model_provider");
         if (current is not null && ours.Contains(current))
         {
             if (!models.TryGetValue(current, out var list)) { edited |= Leave(toml, ours, state); }
-            else if (!list.Contains(toml.GetTop("model") ?? string.Empty)) { edited |= toml.SetTop("model", list[0]); }
+            else
+            {
+                var model = toml.GetTop("model");
+                state["before"] ??= new JsonObject();
+                state["api"] = current;
+                edited |= Select(toml, current, list, state);
+                if (model is not null)
+                {
+                    Models(state)[current] = model;
+                    edited |= toml.SetTop("model", model);
+                }
+            }
+        }
+        else if (current == ProviderId)
+        {
+            var api = Str(state["api"]);
+            if (api is null || !models.TryGetValue(api, out var list)) { edited |= Leave(toml, ours, state); }
+            else
+            {
+                edited |= WriteProvider(toml, api, state);
+                if (!list.Contains(toml.GetTop("model") ?? string.Empty)) { edited |= toml.SetTop("model", list[0]); }
+            }
         }
 
+        foreach (var id in ours.Where(CanUse)) { edited |= toml.SetTable(CodexConfigToml.ProvidersTable, id, null); }
         return edited;
     }
 
@@ -157,7 +199,7 @@ public sealed class CodexApiConfig
             if (File.Exists(StatePath) ? File.ReadAllText(StatePath) == text : state.Count == 0) { return; }
             DshAtomicWrite.WriteText(StatePath, text, DshAtomicWrite.PrivateFileMode, directoryMode: null);
         }
-        catch { /* only a convenience: the next switch picks the first model */ }
+        catch { /* best effort: config.toml remains usable if the state cannot be saved */ }
     }
 
     private static JsonObject Models(JsonObject state)
@@ -173,16 +215,25 @@ public sealed class CodexApiConfig
         var currentProvider = toml.GetTop("model_provider");
         var currentModel = toml.GetTop("model");
         // Remember what the user had before the first API, and the model used with an API we are leaving.
-        if (state["api"] is null) { state["before"] = new JsonObject { ["model"] = currentModel, ["model_provider"] = currentProvider }; }
-        else if (currentProvider is not null && currentModel is not null) { Models(state)[currentProvider] = currentModel; }
+        var currentApi = Str(state["api"]);
+        if (currentApi is null || (currentProvider != ProviderId && currentProvider != currentApi))
+        {
+            state["before"] = new JsonObject { ["model"] = currentModel, ["model_provider"] = currentProvider };
+        }
+        else if (currentModel is not null) { Models(state)[currentApi] = currentModel; }
 
         var model = Str(Models(state)[providerId]);
         if (models is { Count: > 0 } && (model is null || !models.Contains(model))) { model = models[0]; }
         state["api"] = providerId;
-        var edited = toml.SetTop("model_provider", providerId);
+        var edited = WriteProvider(toml, providerId, state);
+        edited |= toml.SetTop("model_provider", ProviderId);
         if (model is not null) { edited |= toml.SetTop("model", model); }
         return edited;
     }
+
+    private static bool WriteProvider(CodexConfigToml toml, string apiId, JsonObject state)
+        => toml.SetTable(CodexConfigToml.ProvidersTable, ProviderId, ((JsonObject)state["providers"]![apiId]!)
+            .Select(p => new KeyValuePair<string, string>(p.Key, Str(p.Value)!)).ToArray());
 
     private static bool Leave(CodexConfigToml toml, IReadOnlySet<string>? ours, JsonObject state)
     {
@@ -191,14 +242,16 @@ public sealed class CodexApiConfig
         if (legacy is not null && (ours?.Contains(legacy) ?? toml.HasTable(LegacyProfilesTable, legacy))) { edited |= toml.SetTop("profile", null); }
 
         var provider = toml.GetTop("model_provider");
-        var mine = provider is not null && (Str(state["api"]) == provider || (ours?.Contains(provider) ?? false));
+        var mine = provider == ProviderId || (provider is not null && (Str(state["api"]) == provider || (ours?.Contains(provider) ?? false)));
         if (!mine) { return edited; }
 
         var model = toml.GetTop("model");
-        if (model is not null) { Models(state)[provider!] = model; }
+        var api = provider == ProviderId ? Str(state["api"]) : provider;
+        if (model is not null && api is not null) { Models(state)[api] = model; }
         var before = state["before"] as JsonObject;
         edited |= toml.SetTop("model_provider", Str(before?["model_provider"]));
         edited |= toml.SetTop("model", Str(before?["model"]));
+        edited |= toml.SetTable(CodexConfigToml.ProvidersTable, ProviderId, null);
         state.Remove("api");
         state.Remove("before");
         return edited;

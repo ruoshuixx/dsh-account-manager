@@ -191,7 +191,7 @@ public sealed class SwitchTargets
 
     private const string CodexRestartNote = "已打开的 Codex 桌面版需要完全退出、重启后才生效";
 
-    /// <summary>Makes Codex use this API provider (its <c>config.toml</c> profile); the ChatGPT login stays in auth.json.</summary>
+    /// <summary>Makes Codex use this API through the shared provider; the ChatGPT login stays in auth.json.</summary>
     public SwitchOutcome UseCodexApi(string providerId)
     {
         if (_codexApi is null || !_codexApi.Available) { throw new DshException("没有找到 Codex（" + _codex.Home + "）。"); }
