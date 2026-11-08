@@ -14,11 +14,17 @@ public interface ICodexDesktopApp
     /// <summary>Whether the desktop app is running (always false where there is no desktop app).</summary>
     bool IsRunning();
 
+    /// <summary>Whether the Electron desktop app itself is running, excluding the Linux managed daemon.</summary>
+    bool IsDesktopRunning() => IsRunning();
+
     /// <summary>Whether the desktop app can be opened without an already running process.</summary>
     bool IsInstalled() => false;
 
     /// <summary>Opens the desktop app and returns a short result for the status bar.</summary>
     Task<string> StartAsync(CancellationToken cancellationToken = default) => Task.FromResult(string.Empty);
+
+    /// <summary>Closes the desktop app without reopening it or stopping the Linux managed daemon.</summary>
+    Task<string> StopAsync(CancellationToken cancellationToken = default) => Task.FromResult(string.Empty);
 
     /// <summary>Quits every process of the app and opens it again. Returns a short result for the status bar.</summary>
     Task<string> RestartAsync(CancellationToken cancellationToken = default);
@@ -49,6 +55,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
     private static readonly JsonSerializerOptions StateOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     private readonly string? _statePath;
     private WindowsApp? _lastRemembered;
+    private string? _stoppedExecutable;
     private string? _startAppId;
     private DateTime _startAppsRead;
 
@@ -69,6 +76,12 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         finally { foreach (var (p, _) in found) { p.Dispose(); } }
     }
 
+    public bool IsDesktopRunning()
+    {
+        if (OperatingSystem.IsLinux()) { return FindLinuxDesktop().Count > 0; }
+        return IsRunning();
+    }
+
     public bool IsInstalled()
     {
         if (OperatingSystem.IsLinux()) { return LinuxDesktop().Executables.Count > 0; }
@@ -82,7 +95,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         string? reason = null;
         if (OperatingSystem.IsLinux())
         {
-            if (LinuxDesktop().Executables.FirstOrDefault() is { } exe)
+            if ((_stoppedExecutable ?? LinuxDesktop().Executables.FirstOrDefault()) is { } exe)
             {
                 reason = await TryStartAsync(() => OpenLinuxDesktop(exe), cancellationToken).ConfigureAwait(false);
                 if (reason is null) { return success; }
@@ -90,6 +103,16 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         }
         else if (OperatingSystem.IsWindows())
         {
+            if (_stoppedExecutable is { } executable)
+            {
+                reason = await TryStartAsync(() => Open(executable), cancellationToken).ConfigureAwait(false);
+                if (reason is null) { return success; }
+                if (IsStorePath(executable))
+                {
+                    reason = await TryStartAsync(() => OpenStoreWithPowerShell(executable), cancellationToken).ConfigureAwait(false);
+                    if (reason is null) { return success; }
+                }
+            }
             if (ReadRemembered() is { } app)
             {
                 reason = await TryStartAsync(() => OpenRemembered(app), cancellationToken).ConfigureAwait(false);
@@ -128,19 +151,35 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         {
             var results = new List<string>();
             var desktopRunning = FindLinuxDesktop().Count > 0;
-            if (desktopRunning) { results.Add(await RestartLinuxDesktopAsync(cancellationToken).ConfigureAwait(false)); }
+            if (desktopRunning)
+            {
+                var stopped = await StopAsync(cancellationToken).ConfigureAwait(false);
+                if (IsDesktopRunning()) { results.Add(stopped); }
+                else { results.Add((await StartAsync(cancellationToken).ConfigureAwait(false)).Replace("已启动", "已重启", StringComparison.Ordinal)); }
+            }
             if (FindDaemon() is not null) { results.Add(await RestartDaemonAsync(cancellationToken).ConfigureAwait(false)); }
             // Only the service was running: the installed desktop app is opened too, as a manual switch asks for.
             if (!desktopRunning && LinuxDesktop().Executables.Count > 0) { results.Add(await StartAsync(cancellationToken).ConfigureAwait(false)); }
             return results.Count == 0 ? "Codex 没有在运行" : string.Join("；", results);
         }
         if (!OperatingSystem.IsWindows()) { return "这台电脑没有 Codex 桌面版"; }
-        const string failure = "已关闭 Codex 桌面版，但没能自动打开，请手动打开";
+        if (!IsDesktopRunning()) { return "Codex 桌面版没有在运行"; }
+        var result = await StopAsync(cancellationToken).ConfigureAwait(false);
+        if (IsDesktopRunning()) { return result; }
+        return (await StartAsync(cancellationToken).ConfigureAwait(false)).Replace("已启动", "已重启", StringComparison.Ordinal);
+    }
+
+    public async Task<string> StopAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (OperatingSystem.IsLinux()) { return await StopLinuxDesktopAsync(cancellationToken).ConfigureAwait(false); }
+        if (!OperatingSystem.IsWindows()) { return "这台电脑没有 Codex 桌面版"; }
         var found = Find();
         if (found.Count == 0) { return "Codex 桌面版没有在运行"; }
 
         // What to open again: the windowed process's executable.
         var main = found.FirstOrDefault(f => HasWindow(f.Process)).Path ?? found[0].Path;
+        _stoppedExecutable = main;
         var packageRoot = StorePackageRoot(main);
         try
         {
@@ -169,7 +208,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
                         }
                     }
 
-                    if (closing.Elapsed >= TimeSpan.FromSeconds(10)) { return failure + "（程序仍未退出）"; }
+                    if (closing.Elapsed >= TimeSpan.FromSeconds(10)) { throw new InvalidOperationException("没能关闭 Codex 桌面版（程序仍未退出），已取消切换"); }
                 }
                 finally { foreach (var (p, _) in remaining) { p.Dispose(); } }
                 await Task.Delay(250, cancellationToken).ConfigureAwait(false);
@@ -183,29 +222,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
             foreach (var (p, _) in found) { p.Dispose(); }
         }
 
-        string? reason = null;
-        var attempts = IsStorePath(main) ? 2 : 1;
-        for (var attempt = 0; attempt < attempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                if (attempt == 0) { reason = Open(main); }
-                else { OpenStoreWithPowerShell(main); }
-            }
-            catch (Exception ex) { reason = ex.Message; }
-
-            try
-            {
-                if (await WaitForStartAsync(cancellationToken).ConfigureAwait(false)) { return "已重启 Codex 桌面版"; }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { reason = ex.Message; }
-        }
-
-        reason = reason?.Split('\r', '\n')[0];
-        if (reason is { Length: > 160 }) { reason = reason[..160] + "…"; }
-        return failure + (string.IsNullOrWhiteSpace(reason) ? string.Empty : "（" + reason + "）");
+        return "已关闭 Codex 桌面版";
     }
 
     // ---- Linux desktop app ----------------------------------------------------------
@@ -281,27 +298,24 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         return found;
     }
 
-    private static async Task<string> RestartLinuxDesktopAsync(CancellationToken cancellationToken)
+    private async Task<string> StopLinuxDesktopAsync(CancellationToken cancellationToken)
     {
         var found = FindLinuxDesktop();
         if (found.Count == 0) { return "Codex 桌面版没有在运行"; }
-        var main = found.MinBy(f => f.Pid).Exe;
+        _stoppedExecutable = found.MinBy(f => f.Pid).Exe;
         foreach (var (pid, _) in found) { Signal(pid, "TERM"); }
 
         var deadline = DateTime.UtcNow + CloseWait;
         while (DateTime.UtcNow < deadline && FindLinuxDesktop().Count > 0) { await Task.Delay(250, cancellationToken).ConfigureAwait(false); }
         foreach (var (pid, _) in FindLinuxDesktop()) { Signal(pid, "KILL"); }
+        deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+        while (FindLinuxDesktop().Count > 0)
+        {
+            if (DateTime.UtcNow >= deadline) { throw new InvalidOperationException("没能关闭 Codex 桌面版（程序仍未退出），已取消切换"); }
+            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+        }
         await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            OpenLinuxDesktop(main);
-            return "已重启 Codex 桌面版";
-        }
-        catch (Exception ex)
-        {
-            return "已关闭 Codex 桌面版，但没能重新打开（" + ex.Message + "），请手动打开";
-        }
+        return "已关闭 Codex 桌面版";
     }
 
     private static void OpenLinuxDesktop(string executable)

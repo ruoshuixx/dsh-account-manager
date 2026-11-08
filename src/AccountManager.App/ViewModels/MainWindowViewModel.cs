@@ -6,6 +6,7 @@ using AccountManager.Core.Import;
 using AccountManager.Core.Models;
 using AccountManager.Core.Dsh;
 using AccountManager.Core.Quota;
+using AccountManager.Core.Sharing;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -484,7 +485,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             if (target == SwitchTarget.Codex && interactive)
             {
                 IsBusy = true;
-                try { await OfferCodexRestartAsync("需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。"); }
+                try
+                {
+                    var launch = await PrepareCodexSwitchAsync();
+                    await OfferCodexRestartAsync(launch, "需要重启后才会用上“" + row.Title + "”（如果它还在用之前的登录）。");
+                }
+                catch (Exception ex)
+                {
+                    StatusText = _services.Secrets.Redact(ex.Message);
+                    await _dialogs.ShowWarningAsync("切换失败", StatusText);
+                }
                 finally { IsBusy = false; }
             }
             return;
@@ -492,6 +502,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
 
         IsBusy = true;
         StatusText = "正在切换 " + name + " 账号 …";
+        CodexLaunchPlan? codexLaunch = null;
         try
         {
             IReadOnlyList<SwitchTarget> others;
@@ -511,13 +522,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
                 if (!confirmed) { StatusText = "已取消切换。"; return; }
             }
 
+            if (target == SwitchTarget.Codex && interactive) { codexLaunch = await PrepareCodexSwitchAsync(); }
             var result = await Task.Run(() => _services.SwitchAsync(row.Row.CredentialId)).ConfigureAwait(true);
             StatusText = result.Changed ? "已切换 " + name + " 账号：" + result.Label : result.Label + " 已是 " + name + " 的当前账号。";
             if (result.Changed && result.Note.Length > 0) { StatusText += " · " + result.Note; }
-            if (result.Changed && target == SwitchTarget.Codex && interactive)
+            if (codexLaunch is not null)
             {
-                // Codex desktop only reads the login when it starts.
-                await OfferCodexRestartAsync("重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
+                await OfferCodexRestartAsync(codexLaunch, "重启后才会使用新的" + (row.IsApi ? " API" : "账号") + "。");
+                codexLaunch = null;
             }
             if (result.ReauthRequired)
             {
@@ -526,6 +538,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         }
         catch (Exception ex)
         {
+            // A failed write should not leave an app we closed stranded. No sidebar edit is needed for recovery.
+            if (codexLaunch is { ConfirmRestart: false })
+            {
+                try { _services.Log.Info(await Task.Run(() => _services.CodexDesktop.StartAsync()).ConfigureAwait(true)); }
+                catch (Exception startError) { _services.Log.Warn("重新打开 Codex 失败：" + _services.Secrets.Redact(startError.Message)); }
+            }
             StatusText = _services.Secrets.Redact(ex.Message);
             await _dialogs.ShowWarningAsync("切换失败", StatusText);
         }
@@ -539,45 +557,90 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         if (!string.IsNullOrEmpty(status) && StatusText.StartsWith("已读取", StringComparison.Ordinal)) { StatusText = status; }
     }
 
-    /// <summary>After a manual switch: opens the desktop app, or asks before restarting a running app or service.</summary>
-    private async Task OfferCodexRestartAsync(string why)
+    private sealed record CodexLaunchPlan(string Name, bool ConfirmRestart, bool Restart, bool ShareProjects);
+
+    /// <summary>Asks and stops the desktop before any account write. Managed daemons still restart after the switch.</summary>
+    private async Task<CodexLaunchPlan?> PrepareCodexSwitchAsync()
     {
         var desktop = _services.CodexDesktop;
         string name;
         bool running;
+        bool desktopRunning;
         bool installed;
         try
         {
-            (name, running, installed) = await Task.Run(() =>
+            (name, running, desktopRunning, installed) = await Task.Run(() =>
             {
-                var found = desktop.IsRunning();
-                return (desktop.Name, found, !found && desktop.IsInstalled());
+                var foundDesktop = desktop.IsDesktopRunning();
+                return (desktop.Name, foundDesktop || desktop.IsRunning(), foundDesktop, !foundDesktop && desktop.IsInstalled());
             }).ConfigureAwait(true);
         }
-        catch (Exception ex) { _services.Log.Warn("无法检测 Codex：" + _services.Secrets.Redact(ex.Message)); return; }
+        catch (Exception ex) { _services.Log.Warn("无法检测 Codex：" + _services.Secrets.Redact(ex.Message)); return null; }
         if (!running && !installed)
         {
             // Not found: say what was seen, so a renamed app can be recognised next time.
             var seen = await Task.Run(desktop.Describe).ConfigureAwait(true);
             if (seen.Length > 0) { _services.Log.Info("没有检测到运行中的" + name + "，未提示重启。看到的进程：" + seen); }
-            return;
+            return null;
         }
 
-        if (running && !await _dialogs.ConfirmAsync("重启 " + name, name + why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
+        if (running && !desktopRunning) { return new(name, ConfirmRestart: true, Restart: true, ShareProjects: installed); }
+        if (desktopRunning)
+        {
+            if (!await _dialogs.ConfirmAsync("关闭 " + name,
+                "切换需要先关闭 " + name + "，再写入新账号并重新打开。现在关闭吗？正在进行的对话或任务会被中断。")) { return null; }
+            var status = StatusText;
+            StatusText = "正在关闭" + name + " …";
+            var daemonRunning = await Task.Run(async () =>
+            {
+                _services.Log.Info(await desktop.StopAsync().ConfigureAwait(false));
+                if (desktop.IsDesktopRunning()) { throw new InvalidOperationException("没能关闭" + name + "，已取消切换，请完全退出后重试。"); }
+                return desktop.IsRunning();
+            }).ConfigureAwait(true);
+            StatusText = status;
+            return new(name, ConfirmRestart: false, Restart: daemonRunning, ShareProjects: true);
+        }
+        return new(name, ConfirmRestart: false, Restart: false, ShareProjects: true);
+    }
+
+    /// <summary>After a manual switch: shares local projects while stopped, then starts the app or restarts its daemon.</summary>
+    private async Task OfferCodexRestartAsync(CodexLaunchPlan? launch, string why)
+    {
+        if (launch is null) { return; }
+        var desktop = _services.CodexDesktop;
+        var name = launch.Name;
+        if (launch.ConfirmRestart && !await _dialogs.ConfirmAsync("重启 " + name,
+            name + why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
 
         var status = StatusText;
-        StatusText = running ? "正在重启" + name + " …" : "正在启动 Codex 桌面版 …";
+        StatusText = launch.Restart ? "正在重启" + name + " …" : "正在启动 Codex 桌面版 …";
         try
         {
-            var result = await Task.Run(() => running ? desktop.RestartAsync() : desktop.StartAsync()).ConfigureAwait(true);
+            var result = await Task.Run(async () =>
+            {
+                if (launch.ShareProjects) { ShareCodexLocalProjects(); }
+                return await (launch.Restart ? desktop.RestartAsync() : desktop.StartAsync()).ConfigureAwait(false);
+            }).ConfigureAwait(true);
             _services.Log.Info(result);
             // Replace the "restart needed" hint with the actual launch result.
             StatusText = status.Split(" · ")[0].TrimEnd('。') + " · " + result;
         }
         catch (Exception ex)
         {
-            StatusText = (running ? "重启" + name : "启动 Codex 桌面版") + "失败：" + _services.Secrets.Redact(ex.Message);
+            StatusText = status + " · " + (launch.Restart ? "重启" + name : "启动 Codex 桌面版") + "失败：" + _services.Secrets.Redact(ex.Message);
         }
+    }
+
+    /// <summary>Best effort only; a sidebar issue must never fail an account switch or desktop launch.</summary>
+    private void ShareCodexLocalProjects()
+    {
+        try
+        {
+            if (_services.CodexDesktop.IsDesktopRunning()) { return; }
+            if (CodexProjectState.ShareLocalProjects(Path.Combine(_services.CodexCli.Home, ".codex-global-state.json"), out var note)
+                && !string.IsNullOrEmpty(note)) { _services.Log.Info(note); }
+        }
+        catch (Exception ex) { _services.Log.Warn("共享 Codex 本地项目失败（不影响切换）：" + _services.Secrets.Redact(ex.Message)); }
     }
 
     private static string OtherNames(IEnumerable<SwitchTarget> targets) => string.Join("、", targets.Select(t => t.Display()));

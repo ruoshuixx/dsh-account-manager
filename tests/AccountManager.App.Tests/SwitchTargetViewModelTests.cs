@@ -47,6 +47,8 @@ public sealed class SwitchTargetViewModelTests : IDisposable
 
     private string CodexAuth => Path.Combine(CodexHome, "auth.json");
 
+    private string CodexState => Path.Combine(CodexHome, ".codex-global-state.json");
+
     private string DshCredentials => Path.Combine(_root, "dsh", ".credentials.yaml");
 
     private AppServices NewServices(AppSettings settings)
@@ -100,6 +102,36 @@ public sealed class SwitchTargetViewModelTests : IDisposable
             ["tokens"] = new JsonObject { ["id_token"] = "fake-id-token", ["access_token"] = Jwt(email, accountId), ["refresh_token"] = refresh, ["account_id"] = accountId },
             ["last_refresh"] = "2026-10-01T10:00:00Z",
         }.ToJsonString() + "\n");
+    }
+
+    private byte[] WriteProjectState()
+    {
+        Directory.CreateDirectory(CodexHome);
+        File.WriteAllText(CodexState, """
+            {"local-projects":{"p-active":{}},"project-order":["p-active"],
+             "electron-account-renderer-state-v1":{"owner":"scope-a","inactive":{
+               "scope-b":{"atoms":{},"globals":{"local-projects":{"p-inactive":{}},"project-order":["p-inactive"]}}
+             }}}
+            """);
+        return File.ReadAllBytes(CodexState);
+    }
+
+    private void AssertProjectsShared()
+    {
+        Assert.False(_desktop.Running);
+        var root = JsonNode.Parse(File.ReadAllText(CodexState))!;
+        Assert.Equal(2, root["local-projects"]!.AsObject().Count);
+        Assert.True(JsonNode.DeepEquals(root["local-projects"], root["electron-account-renderer-state-v1"]!["inactive"]!["scope-b"]!["globals"]!["local-projects"]));
+    }
+
+    private void TrackCodexOrder(AppServices services)
+    {
+        services.Log.EntryWritten += (_, entry) =>
+        {
+            if (entry.Message.StartsWith("Codex：已把该账号写入 ", StringComparison.Ordinal)
+                || entry.Message.StartsWith("Codex：已改用 API ", StringComparison.Ordinal)) { _desktop.Order.Add("Write"); }
+            if (entry.Message.StartsWith("已让各账号共用 ", StringComparison.Ordinal)) { _desktop.Order.Add("Share"); }
+        };
     }
 
     private static AccountRowViewModel Row(MainWindowViewModel vm, string id) => vm.Accounts.Single(a => a.Row.CredentialId == id);
@@ -254,25 +286,60 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     [AvaloniaTheory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task ACodexSwitchOffersToRestartTheRunningDesktopApp(bool restart)
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task ARunningDesktopIsStoppedBeforeWritingAndStartedAfterSharingOnlyWhenConfirmed(bool api, bool restart)
     {
         var (services, vm, dialogs) = NewVm(confirm: restart);
         await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
-        var b = await AddAsync(services, "b@example.test", "acct-2", "refresh-b", activate: false);
         WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        var b = await AddSwitchRowAsync(services, api);
         vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
         await vm.ReadDshCommand.ExecuteAsync(null);
+        var authBefore = File.ReadAllBytes(CodexAuth);
+        var configBefore = services.CodexApi.ReadText();
+        var stateBefore = WriteProjectState();
+        TrackCodexOrder(services);
+        dialogs.OnConfirm = () =>
+        {
+            Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth));
+            Assert.Equal(configBefore, services.CodexApi.ReadText());
+            Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+        };
+        _desktop.OnStop = () =>
+        {
+            Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth));
+            Assert.Equal(configBefore, services.CodexApi.ReadText());
+            Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+        };
+        _desktop.OnStart = () =>
+        {
+            if (api) { Assert.NotEqual(configBefore, services.CodexApi.ReadText()); }
+            else { Assert.NotEqual(authBefore, File.ReadAllBytes(CodexAuth)); }
+            AssertProjectsShared();
+        };
         _desktop.Running = true;
 
         await vm.SwitchAsync(Row(vm, b));
 
-        Assert.StartsWith("重启 Codex 测试版", Assert.Single(dialogs.Confirms));
-        Assert.Contains("refresh-b", File.ReadAllText(CodexAuth)); // switched either way
-        Assert.Equal(restart ? 1 : 0, _desktop.Restarts);
-        Assert.Equal(0, _desktop.Starts);
-        Assert.Contains(restart ? "已重启 Codex 桌面版" : "重启后才生效", vm.StatusText);
+        var prompt = Assert.Single(dialogs.Confirms);
+        Assert.StartsWith("关闭 Codex 测试版", prompt);
+        Assert.Contains("切换需要先关闭 Codex 测试版，再写入新账号并重新打开。现在关闭吗？正在进行的对话或任务会被中断。", prompt);
+        if (api) { Assert.NotEqual(configBefore, services.CodexApi.ReadText()); }
+        else { Assert.Contains("refresh-b", File.ReadAllText(CodexAuth)); }
+        Assert.Equal(restart ? 1 : 0, _desktop.Stops);
+        Assert.Equal(restart ? 1 : 0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(restart ? new[] { "Stop", "Write", "Share", "Start" } : new[] { "Write" }, _desktop.Order);
+        Assert.Empty(dialogs.Warnings);
+        Assert.Contains(restart ? "已启动 Codex 桌面版" : "重启后才生效", vm.StatusText);
+        if (!restart)
+        {
+            Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+            Assert.False(File.Exists(CodexState + ".ai-account-manager.bak"));
+        }
     }
 
     [AvaloniaFact]
@@ -286,20 +353,26 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         await vm.ReadDshCommand.ExecuteAsync(null);
         Assert.True(Row(vm, b).IsCurrent);
         var authBefore = File.ReadAllBytes(CodexAuth);
+        WriteProjectState();
+        TrackCodexOrder(services);
+        _desktop.OnStart = AssertProjectsShared;
         _desktop.Running = true;
 
         await vm.SwitchAsync(Row(vm, b));
 
-        Assert.StartsWith("重启 Codex 测试版", Assert.Single(dialogs.Confirms));
-        Assert.Equal(1, _desktop.Restarts);
+        Assert.StartsWith("关闭 Codex 测试版", Assert.Single(dialogs.Confirms));
+        Assert.Equal(1, _desktop.Stops);
+        Assert.Equal(1, _desktop.Starts);
+        Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(new[] { "Stop", "Share", "Start" }, _desktop.Order);
         Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth)); // nothing switched
-        Assert.Contains("已重启 Codex 桌面版", vm.StatusText);
+        Assert.Contains("已启动 Codex 桌面版", vm.StatusText);
 
         _desktop.Running = false; // not running: just says it is current
         await vm.SwitchAsync(Row(vm, b));
         Assert.Single(dialogs.Confirms);
         Assert.Contains("已经是 Codex 的当前账号", vm.StatusText);
-        Assert.Equal(0, _desktop.Starts);
+        Assert.Equal(1, _desktop.Starts);
     }
 
     [AvaloniaTheory]
@@ -320,13 +393,19 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         Assert.True(row.IsCurrent);
         var authBefore = File.ReadAllBytes(CodexAuth);
         var configBefore = services.CodexApi.ReadText();
+        var stateBefore = WriteProjectState();
+        TrackCodexOrder(services);
+        _desktop.OnStart = AssertProjectsShared;
         _desktop.Installed = installed;
 
         await vm.SwitchAsync(row);
 
         Assert.Empty(dialogs.Confirms);
         Assert.Equal(installed ? 1 : 0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Stops);
         Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(installed ? new[] { "Share", "Start" } : Array.Empty<string>(), _desktop.Order);
+        if (!installed) { Assert.Equal(stateBefore, File.ReadAllBytes(CodexState)); }
         Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth));
         Assert.Equal(configBefore, services.CodexApi.ReadText());
         Assert.Equal(row.Title + " 已经是 Codex 的当前账号" + (installed ? " · 已启动 Codex 桌面版" : "。"), vm.StatusText);
@@ -346,13 +425,19 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
         await vm.ReadDshCommand.ExecuteAsync(null);
         Assert.False(Row(vm, b).IsCurrent);
+        var stateBefore = WriteProjectState();
+        TrackCodexOrder(services);
+        _desktop.OnStart = AssertProjectsShared;
         _desktop.Installed = installed;
 
         await vm.SwitchAsync(Row(vm, b));
 
         Assert.Empty(dialogs.Confirms);
         Assert.Equal(installed ? 1 : 0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Stops);
         Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(installed ? new[] { "Write", "Share", "Start" } : new[] { "Write" }, _desktop.Order);
+        if (!installed) { Assert.Equal(stateBefore, File.ReadAllBytes(CodexState)); }
         Assert.True(Row(vm, b).IsCurrent);
         Assert.StartsWith("已切换 Codex 账号：", vm.StatusText);
         if (installed)
@@ -455,15 +540,128 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         await vm.ReadDshCommand.ExecuteAsync(null);
         _desktop.Installed = true;
         _desktop.Running = running;
+        var stateBefore = WriteProjectState();
 
         var switchCore = typeof(MainWindowViewModel).GetMethod("SwitchCoreAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
         await (Task)switchCore.Invoke(vm, new object[] { Row(vm, b), false })!;
 
         Assert.Empty(dialogs.Confirms);
         Assert.Equal(0, _desktop.Starts);
+        Assert.Equal(0, _desktop.Stops);
         Assert.Equal(0, _desktop.Restarts);
+        Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+        Assert.False(File.Exists(CodexState + ".ai-account-manager.bak"));
         Assert.True(Row(vm, b).IsCurrent);
         Assert.Contains("refresh-b", File.ReadAllText(CodexAuth));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AManagedDaemonStillOffersToRestartAfterWritingAndIsNeverStopped(bool restart)
+    {
+        var (services, vm, dialogs) = NewVm(confirm: restart);
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddSwitchRowAsync(services, api: false);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        var stateBefore = WriteProjectState();
+        TrackCodexOrder(services);
+        _desktop.DaemonRunning = true;
+        dialogs.OnConfirm = () => Assert.Contains("refresh-b", File.ReadAllText(CodexAuth));
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.StartsWith("重启 Codex 测试版", Assert.Single(dialogs.Confirms));
+        Assert.Equal(0, _desktop.Stops);
+        Assert.Equal(0, _desktop.Starts);
+        Assert.Equal(restart ? 1 : 0, _desktop.Restarts);
+        Assert.Equal(restart ? new[] { "Write", "Restart" } : new[] { "Write" }, _desktop.Order);
+        Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+        Assert.True(Row(vm, b).IsCurrent);
+    }
+
+    [AvaloniaFact]
+    public async Task ADesktopAndManagedDaemonStopOnlyTheDesktopBeforeWritingAndRestartTheDaemonAfterSharing()
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddSwitchRowAsync(services, api: false);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        WriteProjectState();
+        TrackCodexOrder(services);
+        _desktop.Running = true;
+        _desktop.Installed = true;
+        _desktop.DaemonRunning = true;
+        _desktop.OnStop = () => Assert.True(_desktop.DaemonRunning);
+        _desktop.OnRestart = () =>
+        {
+            Assert.Contains("refresh-b", File.ReadAllText(CodexAuth));
+            AssertProjectsShared();
+        };
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.StartsWith("关闭 Codex 测试版", Assert.Single(dialogs.Confirms));
+        Assert.Equal(new[] { "Stop", "Write", "Share", "Restart" }, _desktop.Order);
+        Assert.Empty(dialogs.Warnings);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ADesktopThatWillNotStopPreventsTheAuthWrite(bool stopThrows)
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddSwitchRowAsync(services, api: false);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        var authBefore = File.ReadAllBytes(CodexAuth);
+        var stateBefore = WriteProjectState();
+        TrackCodexOrder(services);
+        _desktop.Running = true;
+        _desktop.RefusesStop = true;
+        if (stopThrows) { _desktop.OnStop = () => throw new InvalidOperationException("程序仍未退出，已取消切换"); }
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.Single(dialogs.Confirms);
+        Assert.Contains("已取消切换", Assert.Single(dialogs.Warnings));
+        Assert.Equal(new[] { "Stop" }, _desktop.Order);
+        Assert.Equal(authBefore, File.ReadAllBytes(CodexAuth));
+        Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+        Assert.False(vm.IsBusy);
+    }
+
+    [AvaloniaFact]
+    public async Task ASharingFailureIsLoggedAndDoesNotPreventSwitchingOrStarting()
+    {
+        var (services, vm, dialogs) = NewVm();
+        await AddAsync(services, "a@example.test", "acct-1", "refresh-a", activate: true);
+        var b = await AddSwitchRowAsync(services, api: false);
+        WriteCodexLogin("c@example.test", "acct-3", "refresh-c");
+        vm.SelectSwitchTargetForTest(SwitchTarget.Codex);
+        await vm.ReadDshCommand.ExecuteAsync(null);
+        var stateBefore = WriteProjectState();
+        Directory.CreateDirectory(CodexState + ".ai-account-manager.bak");
+        TrackCodexOrder(services);
+        _desktop.Installed = true;
+
+        await vm.SwitchAsync(Row(vm, b));
+
+        Assert.Empty(dialogs.Confirms);
+        Assert.Empty(dialogs.Warnings);
+        Assert.Equal(new[] { "Write", "Start" }, _desktop.Order);
+        Assert.True(Row(vm, b).IsCurrent);
+        Assert.Equal(stateBefore, File.ReadAllBytes(CodexState));
+        Assert.Empty(Directory.GetFiles(CodexHome, "*.tmp"));
+        Assert.Contains("共享 Codex 本地项目失败（不影响切换）", File.ReadAllText(services.Log.RunLogPath));
+        Assert.Contains("已启动 Codex 桌面版", vm.StatusText);
     }
 
     // ---- fakes ------------------------------------------------------------------
@@ -473,20 +671,50 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         public string Name => "Codex 测试版";
         public bool Running { get; set; }
         public bool Installed { get; set; }
+        public bool DaemonRunning { get; set; }
+        public bool RefusesStop { get; set; }
+        public Action? OnStop { get; set; }
+        public Action? OnStart { get; set; }
+        public Action? OnRestart { get; set; }
+        public List<string> Order { get; } = new();
+        public int Stops { get; private set; }
         public int Starts { get; private set; }
         public int Restarts { get; private set; }
-        public bool IsRunning() => Running;
+        public bool IsRunning() => Running || DaemonRunning;
+        public bool IsDesktopRunning() => Running;
         public bool IsInstalled() => Installed;
-        public Task<string> StartAsync(CancellationToken cancellationToken = default) { Starts++; return Task.FromResult("已启动 Codex 桌面版"); }
-        public Task<string> RestartAsync(CancellationToken cancellationToken = default) { Restarts++; return Task.FromResult("已重启 Codex 桌面版"); }
+        public Task<string> StopAsync(CancellationToken cancellationToken = default)
+        {
+            Stops++;
+            Order.Add("Stop");
+            OnStop?.Invoke();
+            if (!RefusesStop) { Running = false; }
+            return Task.FromResult("已关闭 Codex 桌面版");
+        }
+        public Task<string> StartAsync(CancellationToken cancellationToken = default)
+        {
+            Starts++;
+            Order.Add("Start");
+            OnStart?.Invoke();
+            Running = true;
+            return Task.FromResult("已启动 Codex 桌面版");
+        }
+        public Task<string> RestartAsync(CancellationToken cancellationToken = default)
+        {
+            Restarts++;
+            Order.Add("Restart");
+            OnRestart?.Invoke();
+            return Task.FromResult("已重启 Codex 桌面版");
+        }
     }
 
     private sealed class ScriptedDialogs : IDialogService
     {
         public bool Confirm { get; set; } = true;
+        public Action? OnConfirm { get; set; }
         public List<string> Confirms { get; } = new();
         public List<string> Warnings { get; } = new();
-        public Task<bool> ConfirmAsync(string title, string message, bool dangerous = false) { Confirms.Add(title + "\n" + message); return Task.FromResult(Confirm); }
+        public Task<bool> ConfirmAsync(string title, string message, bool dangerous = false) { Confirms.Add(title + "\n" + message); OnConfirm?.Invoke(); return Task.FromResult(Confirm); }
         public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
         public Task ShowWarningAsync(string title, string message) { Warnings.Add(message); return Task.CompletedTask; }
         public Task<string?> PickOpenFileAsync(string title, string suggestedName) => Task.FromResult<string?>(null);
