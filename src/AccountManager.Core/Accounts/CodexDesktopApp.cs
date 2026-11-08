@@ -52,6 +52,13 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
     /// <summary>Store packages are OpenAI.* (the Codex app was OpenAI.Codex; it is being rebranded as ChatGPT with Codex).</summary>
     private const string StorePublisherPrefix = "OpenAI.";
     private static readonly TimeSpan CloseWait = TimeSpan.FromSeconds(6);
+
+    /// <summary>How long a started app may show no window before it is reported as still loading.</summary>
+    private static readonly TimeSpan WindowWait = TimeSpan.FromSeconds(40);
+
+    private bool _windowPending;
+
+    private string StartedText => _windowPending ? "已启动 Codex 桌面版（窗口还在加载，稍后会出现）" : "已启动 Codex 桌面版";
     private static readonly JsonSerializerOptions StateOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     private readonly string? _statePath;
     private WindowsApp? _lastRemembered;
@@ -91,14 +98,13 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
     public async Task<string> StartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        const string success = "已启动 Codex 桌面版";
         string? reason = null;
         if (OperatingSystem.IsLinux())
         {
             if ((_stoppedExecutable ?? LinuxDesktop().Executables.FirstOrDefault()) is { } exe)
             {
                 reason = await TryStartAsync(() => OpenLinuxDesktop(exe), cancellationToken).ConfigureAwait(false);
-                if (reason is null) { return success; }
+                if (reason is null) { return StartedText; }
             }
         }
         else if (OperatingSystem.IsWindows())
@@ -106,17 +112,17 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
             if (_stoppedExecutable is { } executable)
             {
                 reason = await TryStartAsync(() => Open(executable), cancellationToken).ConfigureAwait(false);
-                if (reason is null) { return success; }
+                if (reason is null) { return StartedText; }
                 if (IsStorePath(executable))
                 {
                     reason = await TryStartAsync(() => OpenStoreWithPowerShell(executable), cancellationToken).ConfigureAwait(false);
-                    if (reason is null) { return success; }
+                    if (reason is null) { return StartedText; }
                 }
             }
             if (ReadRemembered() is { } app)
             {
                 reason = await TryStartAsync(() => OpenRemembered(app), cancellationToken).ConfigureAwait(false);
-                if (reason is null) { return success; }
+                if (reason is null) { return StartedText; }
             }
 
             // A Store update can invalidate an old entry; the Start menu is the fallback.
@@ -124,7 +130,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
             if (StartApp() is { } appId)
             {
                 reason = await TryStartAsync(() => OpenStartApp(appId), cancellationToken).ConfigureAwait(false);
-                if (reason is null) { return success; }
+                if (reason is null) { return StartedText; }
             }
         }
 
@@ -139,6 +145,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         {
             cancellationToken.ThrowIfCancellationRequested();
             open();
+            _windowPending = false;
             return await WaitForStartAsync(cancellationToken).ConfigureAwait(false) ? null : "等待程序启动超时";
         }
         catch (OperationCanceledException) { throw; }
@@ -545,7 +552,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
         return null;
     }
 
-    /// <summary>The OpenAI Start-menu app id, preferring Codex over ChatGPT. Public for tests.</summary>
+    /// <summary>The OpenAI Start-menu app id: package OpenAI.Codex first, then a Codex title, then ChatGPT (never ChatGPT Classic). Public for tests.</summary>
     public static string? PickStartApp(string json)
     {
         try
@@ -558,6 +565,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
                 JsonValueKind.Array => root.EnumerateArray(),
                 _ => Array.Empty<JsonElement>(),
             };
+            string? codex = null;
             string? chatGpt = null;
             foreach (var app in apps)
             {
@@ -566,11 +574,14 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
                 var appId = id.GetString()!;
                 if (!appId.StartsWith(StorePublisherPrefix, StringComparison.OrdinalIgnoreCase)) { continue; }
                 var title = name.GetString()!;
-                if (title.Contains("Codex", StringComparison.OrdinalIgnoreCase)) { return appId; }
-                if (title.Contains("ChatGPT", StringComparison.OrdinalIgnoreCase)) { chatGpt ??= appId; }
+                // The current app is "ChatGPT" in package OpenAI.Codex; the old one is "ChatGPT Classic".
+                if (appId.StartsWith("OpenAI.Codex_", StringComparison.OrdinalIgnoreCase)) { return appId; }
+                if (title.Contains("Classic", StringComparison.OrdinalIgnoreCase)) { continue; }
+                if (title.Contains("Codex", StringComparison.OrdinalIgnoreCase)) { codex ??= appId; }
+                else if (title.Contains("ChatGPT", StringComparison.OrdinalIgnoreCase)) { chatGpt ??= appId; }
             }
 
-            return chatGpt;
+            return codex ?? chatGpt;
         }
         catch (JsonException) { return null; }
     }
@@ -672,6 +683,7 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
     private async Task<bool> WaitForStartAsync(CancellationToken cancellationToken)
     {
         var starting = Stopwatch.StartNew();
+        var sawProcess = false;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -681,11 +693,18 @@ public sealed class CodexDesktopApp : ICodexDesktopApp
             }
             else if (OperatingSystem.IsWindows())
             {
+                // The ChatGPT app's process appears well before its window: wait for the window, but never open it twice.
                 var found = Find();
-                try { if (found.Any(f => !Exited(f.Process))) { return true; } }
+                try
+                {
+                    var alive = found.Where(f => !Exited(f.Process)).ToList();
+                    if (alive.Any(f => HasWindow(f.Process))) { return true; }
+                    if (alive.Count > 0) { sawProcess = true; }
+                }
                 finally { foreach (var (p, _) in found) { p.Dispose(); } }
+                if (sawProcess && starting.Elapsed >= WindowWait) { _windowPending = true; return true; }
             }
-            if (starting.Elapsed >= TimeSpan.FromSeconds(20)) { return false; }
+            if (starting.Elapsed >= TimeSpan.FromSeconds(20) && !sawProcess) { return false; }
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
     }

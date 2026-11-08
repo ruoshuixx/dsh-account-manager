@@ -634,7 +634,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             name + why + "\n\n现在重启" + name + "吗？正在进行的对话或任务会被中断。")) { return; }
 
         var status = StatusText;
-        StatusText = launch.Restart ? "正在重启" + name + " …" : "正在启动 Codex 桌面版 …";
+        StatusText = (launch.Restart ? "正在重启" + name : "正在启动 Codex 桌面版") + "，窗口出现前请稍候 …";
         try
         {
             var result = await Task.Run(async () =>

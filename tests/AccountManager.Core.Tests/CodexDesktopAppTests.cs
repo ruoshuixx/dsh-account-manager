@@ -98,6 +98,8 @@ public class CodexDesktopAppTests
     [InlineData("""[{"Name":"Codex","AppID":"Other.Codex_pub!App"},{"Name":"CHATGPT","AppID":"openai.ChatGPT_pub!App"}]""", "openai.ChatGPT_pub!App")]
     [InlineData("""[{"Name":"ChatGPT","AppID":"OpenAI.ChatGPT_pub!First"},{"Name":"ChatGPT","AppID":"OpenAI.ChatGPT_pub!Second"}]""", "OpenAI.ChatGPT_pub!First")]
     [InlineData("""[null,4,{"Name":false,"AppID":"OpenAI.Codex_pub!App"},{"Name":"Codex","AppID":null},{"Name":"codex","AppID":"OpenAI.Codex_pub!App"}]""", "OpenAI.Codex_pub!App")]
+    [InlineData("""[{"Name":"ChatGPT Classic","AppID":"OpenAI.ChatGPT-Desktop_pub!App"},{"Name":"ChatGPT","AppID":"OpenAI.Codex_pub!App"}]""", "OpenAI.Codex_pub!App")]
+    [InlineData("""[{"Name":"ChatGPT Classic","AppID":"OpenAI.ChatGPT-Desktop_pub!App"}]""", null)]
     [InlineData("""{"Name":"Codex","AppID":""}""", null)]
     [InlineData("""{"Name":"Unrelated","AppID":"OpenAI.Other_pub!App"}""", null)]
     [InlineData("{}", null)]
