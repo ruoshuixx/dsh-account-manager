@@ -62,9 +62,13 @@ public sealed class SwitchService
             Note = note,
         };
 
-        // Already the target's current account: nothing is read or written.
+        // Already the target's current account: nothing is read or written. For Codex and OpenCode "the same account" is
+        // not enough: they may hold it with older (or rotated) tokens, which must still go through the switch.
         var current = target == SwitchTarget.Dsh ? (account.Active ? id : null) : (await _targets!.GetCurrentAsync(target, cancellationToken).ConfigureAwait(false)).Id;
-        if (current == id) { return Result(false); }
+        if (current == id && (target == SwitchTarget.Dsh || await _targets!.HoldsSameTokensAsync(target, id, cancellationToken).ConfigureAwait(false)))
+        {
+            return Result(false);
+        }
 
         if (_targets is not null) { await _targets.AbsorbAsync(target, cancellationToken).ConfigureAwait(false); }
 

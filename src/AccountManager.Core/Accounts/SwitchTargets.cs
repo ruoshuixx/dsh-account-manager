@@ -91,6 +91,36 @@ public sealed class SwitchTargets
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="target"/>'s current login carries the vault account's refresh token. An account is matched
+    /// by id/e-mail, so a program can hold the same account with older tokens; false when that cannot be told.
+    /// </summary>
+    public async Task<bool> HoldsSameTokensAsync(SwitchTarget target, string vaultId, CancellationToken ct = default)
+    {
+        var record = _vault.FindById(vaultId);
+        if (record is null) { return false; }
+        var refresh = VaultCredentialMapper.RefreshOf(record);
+        if (refresh.Length == 0) { return false; }
+        try
+        {
+            switch (target)
+            {
+                case SwitchTarget.Codex:
+                    return _codex.ReadCurrent() is { HasLogin: true } cli && (JsonMerge.GetString(cli.ToGrant(), "refresh") ?? string.Empty) == refresh;
+                case SwitchTarget.OpenCode:
+                    return (await _openCode.ListAsync(ct).ConfigureAwait(false)).Any(l => l.Active && l.Refresh == refresh);
+                default:
+                    return true;
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log?.Warn("无法比较 " + target.Display() + " 的令牌：" + _secrets.Redact(ex.Message));
+            return false;
+        }
+    }
+
     private string? IdOf(JsonObject grant)
     {
         var records = _vault.Load().ToList();

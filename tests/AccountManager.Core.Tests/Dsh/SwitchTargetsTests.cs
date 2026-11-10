@@ -126,6 +126,24 @@ public class SwitchTargetsTests
     }
 
     [Fact]
+    public async Task TheActiveOpenCodeCredentialOfTheSameAccountWithOlderTokensIsStillReplaced()
+    {
+        var (f, _, b) = await SetupAsync(SwitchTarget.OpenCode);
+        using var _f = f;
+        // OpenCode's active login is this very account, but holds stale tokens (the vault has the newer ones).
+        var stale = f.OpenCodeApi.AddLogin("b@example.test", "acct-2", "refresh-b-old", active: true, exp: 4000000000L);
+
+        var result = await f.Switch.SwitchAsync(b);
+
+        Assert.True(result.Changed);
+        Assert.Null(f.OpenCodeApi.Find(stale["id"]!.GetValue<string>()));
+        var active = f.OpenCodeApi.Find(f.OpenCodeApi.ActiveId!)!;
+        Assert.Equal("refresh-b", Refresh(active));
+        Assert.Single(f.OpenCodeApi.Credentials);
+        Assert.Equal("refresh-b", VaultCredentialMapper.RefreshOf(f.Vault.FindById(b)!));
+    }
+
+    [Fact]
     public async Task ADifferentUserOfTheSameWorkspaceGetsHisOwnCredential()
     {
         var (f, _, b) = await SetupAsync(SwitchTarget.OpenCode);
