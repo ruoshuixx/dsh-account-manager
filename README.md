@@ -118,7 +118,7 @@ sudo apt remove dsh-account-manager                          # 卸载
 | 全部 Codex 账号（多账号） | 加密账号库：Linux `~/.config/DshAccountManager/accounts.vault`，Windows `%LOCALAPPDATA%\DshAccountManager\accounts.vault` |
 | 导入的 Cockpit 原始字段缓存 | 账号库同目录的 `account-manager-state.json`（敏感字段已密封） |
 | 加密备份 | Linux `~/.local/share/DshAccountManager/Backups`，Windows `%LOCALAPPDATA%\DshAccountManager\Backups` |
-| 设置和日志 | 程序所在目录（可写时），否则 Linux `~/.config/DshAccountManager/`、Windows `%LOCALAPPDATA%\DshAccountManager\`；日志在其中的 `logs/` |
+| 设置和日志 | Linux `~/.config/DshAccountManager/`、Windows `%LOCALAPPDATA%\DshAccountManager\`；日志在其中的 `logs/`，超过 10 天的自动清除。0.2.2 及以前放在程序所在目录（如桌面），首次启动 0.2.3 时会自动迁移过来并清除原文件 |
 
 写入与 dsh 自己的文件写入协议兼容（同目录 `<文件>.lock` 锁、临时文件 + 重命名、权限 0600 / 目录 0700，并在锁内重新读取再改自己的键），
 所以可以在 dsh 运行时使用。格式不符合 dsh 要求的文件（例如没有 `version: 1` 的旧布局）会被拒绝改写，并给出提示。

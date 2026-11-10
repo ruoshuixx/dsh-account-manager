@@ -31,6 +31,7 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            LegacyDataMigration.RunAtStartup(); // before the settings are read: pre-0.2.3 files beside the exe
             var store = new SettingsStore();
             var settings = store.Load();
             var services = new AppServices(settings);

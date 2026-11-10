@@ -1,3 +1,4 @@
+using AccountManager.Core.Dsh;
 using AccountManager.Core.Accounts;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -82,7 +83,7 @@ public sealed class SettingsStore
 
     public static string DefaultPath() => Path.Combine(PortablePaths.Data, "avalonia-settings.json");
 
-    /// <summary>Old per-user location, read once to migrate settings into the portable folder.</summary>
+    /// <summary>Same per-user folder as the default path (before 0.2.3 it was only a last-used copy of the settings kept beside the executable one).</summary>
     public static string LegacyPath()
     {
         if (OperatingSystem.IsWindows())
@@ -152,46 +153,17 @@ public sealed class SettingsStore
 }
 
 /// <summary>
-/// Portable (green) data location: everything lives next to the executable so the single
-/// file can be moved around with its settings and logs. Falls back to the per-user folder
-/// only when the executable directory is not writable (e.g. Program Files, read-only media).
+/// Where the app keeps its settings and logs: the per-user data folder (Windows
+/// <c>%LOCALAPPDATA%\DshAccountManager</c>, Linux <c>~/.config/DshAccountManager</c>), next to the account vault.
+/// Before 0.2.3 they lived beside the executable (the Desktop, for most people);
+/// <see cref="LegacyDataMigration"/> moves those over.
 /// </summary>
 public static class PortablePaths
 {
-    private static readonly Lazy<string> Resolved = new(Resolve);
+    private static readonly Lazy<string> Resolved = new(AccountVault.DefaultDirectory);
 
     /// <summary>Directory for settings and logs.</summary>
     public static string Data => Resolved.Value;
 
     public static string Logs => Path.Combine(Data, "logs");
-
-    private static string Resolve()
-    {
-        var baseDirectory = AppContext.BaseDirectory;
-        if (IsWritable(baseDirectory)) { return baseDirectory; }
-
-        if (OperatingSystem.IsWindows())
-        {
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(local, "DshAccountManager");
-        }
-
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".config", "DshAccountManager");
-    }
-
-    private static bool IsWritable(string directory)
-    {
-        try
-        {
-            var probe = Path.Combine(directory, ".write-test-" + Guid.NewGuid().ToString("N"));
-            File.WriteAllText(probe, string.Empty);
-            File.Delete(probe);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 }

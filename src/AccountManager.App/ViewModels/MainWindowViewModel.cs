@@ -60,10 +60,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         var failedUpdate = DebInstallUpdater.TakeFailureNote(PortablePaths.Data);
         if (failedUpdate is not null) { _services.Log.Warn("上次升级未完成：" + failedUpdate); }
 
+        var migrated = LegacyDataMigration.TakePending();
+        if (migrated is not null) { _services.Log.Info("设置和日志已从 " + migrated.From + " 迁移到 " + migrated.To + "（设置：" + (migrated.SettingsMoved ? "是" : "否") + "，日志 " + migrated.LogsMoved + " 个，清除过期 " + migrated.LogsExpired + " 个，未处理 " + migrated.Problems.Count + " 项）"); }
+
         await ReadDshAsync();
         if (Accounts.Any(a => a.IsCodex))
         {
             await AutoRefreshTickAsync();
+        }
+
+        if (migrated is not null)
+        {
+            if (migrated.Problems.Count > 0) { await _dialogs.ShowWarningAsync("设置和日志已迁移", migrated.Describe()); }
+            else { await _dialogs.ShowInfoAsync("设置和日志已迁移", migrated.Describe()); }
         }
 
         if (failedUpdate is not null) { await _dialogs.ShowWarningAsync("上次升级未完成", failedUpdate); }
