@@ -24,6 +24,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="BuildTimestampUtc" Value="$([System.DateTime]::UtcNow.ToString('O'))" />
     <AvaloniaResource Include="Assets\app.ico" />
   </ItemGroup>
 

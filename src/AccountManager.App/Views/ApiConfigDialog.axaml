@@ -11,7 +11,7 @@
       <TextBlock x:Name="ProviderText" Classes="subtitle" TextWrapping="Wrap" />
     </StackPanel>
     <ScrollViewer Grid.Row="1">
-      <StackPanel Spacing="5" Margin="0,0,4,4">
+      <StackPanel x:Name="FormPanel" Spacing="5" Margin="0,0,4,4">
         <TextBlock Text="供应商名称（仅修改显示名称，不改变 ID）" FontWeight="SemiBold" />
         <ComboBox x:Name="NameBox" IsEditable="True" HorizontalAlignment="Stretch" PlaceholderText="选择模板，或直接输入名称" />
 
@@ -21,6 +21,10 @@
         <TextBlock Text="模型 ID（每行一个或用逗号分隔）" FontWeight="SemiBold" />
         <TextBox x:Name="ModelsBox" AcceptsReturn="True" Height="84" TextWrapping="NoWrap"
                  Watermark="gpt-4o&#x0a;gpt-4o-mini" />
+        <CheckBox x:Name="LatestGptBox" Content="仅推荐模型（按 OpenAI 官方选型指南）" IsVisible="False" IsChecked="True" />
+        <Button x:Name="QueryButton" Classes="toolbar" Content="查询官方模型并替换列表" Click="OnQuery" HorizontalAlignment="Left"
+                ToolTip.Tip="按当前密钥查询；成功后替换编辑框中的模型，点击保存才写入。" />
+        <TextBlock x:Name="QueryStatus" Classes="subtitle" TextWrapping="Wrap" />
 
         <TextBlock x:Name="AutoConfigText" Classes="subtitle" TextWrapping="Wrap" />
 
@@ -41,7 +45,7 @@
     <StackPanel Grid.Row="2" Spacing="6" Margin="0,8,0,0">
       <TextBlock x:Name="ErrorText" Classes="error" />
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-        <Button Classes="primary" Content="保存" Click="OnSave" />
+        <Button x:Name="SaveButton" Classes="primary" Content="保存" Click="OnSave" />
         <Button Classes="toolbar" Content="取消" Click="OnCancel" />
       </StackPanel>
     </StackPanel>

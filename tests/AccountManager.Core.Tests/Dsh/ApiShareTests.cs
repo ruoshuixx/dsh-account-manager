@@ -100,6 +100,184 @@ public class ApiShareTests
         Assert.Null(f.CodexApi.CurrentApi());
     }
 
+    // ---- OpenCode speed tiers (experimental.model_speeds) ----------------------
+
+    private static ApiShareService WithOpenCodeVersion(DshFixture f, Func<Version?> version)
+        => new(f.Backend, f.CodexApi, f.OpenCodeApi, f.OpenCodeConfig, f.Secrets, f.Log, f.Backups, _ => Task.FromResult(version()));
+
+    [Fact]
+    public async Task ASpeedAwareOpenCodeGetsTheSpeedSwitchOnceAndKeepsItsOtherSettings()
+    {
+        using var f = await SetupAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(f.OpenCodeConfig.Path)!);
+        File.WriteAllText(f.OpenCodeConfig.Path, "{ \"experimental\": { \"artifacts\": true } }");
+        var share = WithOpenCodeVersion(f, () => new Version(2, 4, 1));
+
+        var first = await share.SyncAsync(SharedState.Empty);
+
+        var experimental = f.OpenCodeConfig.Read()!["experimental"]!.AsObject();
+        Assert.True(experimental["model_speeds"]!.GetValue<bool>());
+        Assert.True(experimental["artifacts"]!.GetValue<bool>());
+        var writes = f.OpenCodeConfig.Writes;
+        var second = await share.SyncAsync(first.State);
+        Assert.False(second.Changed);
+        Assert.Equal(writes, f.OpenCodeConfig.Writes);
+    }
+
+    [Fact]
+    public async Task ASpeedSwitchTheUserAlreadySetIsNeverChanged()
+    {
+        using var f = await SetupAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(f.OpenCodeConfig.Path)!);
+        File.WriteAllText(f.OpenCodeConfig.Path, "{ \"experimental\": { \"model_speeds\": false } }");
+
+        await WithOpenCodeVersion(f, () => new Version(2, 5, 0)).SyncAsync(SharedState.Empty);
+
+        Assert.False(f.OpenCodeConfig.Read()!["experimental"]!["model_speeds"]!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("2.3.2")]
+    [InlineData("1.19.6")]
+    [InlineData("")]
+    public async Task AnOlderOrUnknownOpenCodeIsLeftWithoutTheSpeedSwitch(string version)
+    {
+        using var f = await SetupAsync();
+        var share = WithOpenCodeVersion(f, () => version.Length == 0 ? null : Version.Parse(version));
+
+        var result = await share.SyncAsync(SharedState.Empty);
+
+        Assert.Empty(result.Notes);
+        Assert.Null(f.OpenCodeConfig.Read()!["experimental"]);
+    }
+
+    [Fact]
+    public async Task AFailingVersionQueryNeitherBlocksTheSyncNorWritesTheSwitch()
+    {
+        using var f = await SetupAsync();
+        var share = new ApiShareService(f.Backend, f.CodexApi, f.OpenCodeApi, f.OpenCodeConfig, f.Secrets, f.Log, f.Backups,
+            _ => throw new AccountManager.Core.OpenCode.OpenCodeException("no version"));
+
+        var result = await share.SyncAsync(SharedState.Empty);
+
+        Assert.Empty(result.Notes);
+        Assert.Equal(2, result.State.OpenCode.Count);
+        Assert.Null(f.OpenCodeConfig.Read()!["experimental"]);
+    }
+
+    private static JsonObject OpenAiView(bool fast)
+    {
+        static JsonArray Tiers(params string[] efforts) => new(efforts.Select(e => (JsonNode)new JsonObject
+        {
+            ["id"] = e,
+            ["body"] = new JsonObject { ["reasoning"] = new JsonObject { ["effort"] = e } },
+        }).ToArray());
+        var models = new JsonObject
+        {
+            ["gpt-6.1-sol"] = new JsonObject { ["name"] = "gpt-6.1-sol", ["variants"] = Tiers("low", "high") },
+            ["gpt-6-luna"] = new JsonObject { ["name"] = "gpt-6-luna" },
+            ["gpt-6.1-terra"] = new JsonObject { ["name"] = "gpt-6.1-terra", ["variants"] = Tiers("low") },
+        };
+        if (fast)
+        {
+            models["gpt-6.1-sol-fast"] = new JsonObject { ["name"] = "gpt-6.1-sol (Fast)", ["variants"] = Tiers("low", "high") };
+            models["gpt-6-luna-fast"] = new JsonObject { ["name"] = "gpt-6-luna (Fast)" };
+        }
+
+        return new JsonObject
+        {
+            ["name"] = "OpenAI",
+            ["package"] = OpenAiApiProtocol.ResponsesPackage,
+            ["settings"] = new JsonObject { ["baseURL"] = "https://api.openai.com/v1" },
+            ["models"] = models,
+        };
+    }
+
+    [Fact]
+    public async Task AnApiWithFastTwinsInDshGetsFastVariantsInOpenCodeAndLosesThemWhenFastIsOff()
+    {
+        using var f = await SetupAsync();
+        const string id = "api-0000000000000000000000000000000c";
+        await f.Backend.WriteApiProviderAsync(id, OpenAiView(fast: true), "fake-key-o");
+
+        var first = await f.Share.SyncAsync(SharedState.Empty);
+
+        var models = f.OpenCodeConfig.Read()!["providers"]![id]!["models"]!.AsObject();
+        // The twin models themselves are not shared; Fast is a variant of the base model.
+        Assert.Equal(new[] { "gpt-6.1-sol", "gpt-6-luna", "gpt-6.1-terra" }.OrderBy(x => x), models.Select(kv => kv.Key).OrderBy(x => x));
+        var sol = models["gpt-6.1-sol"]!["variants"]!.AsArray();
+        Assert.Equal(new[] { "low", "high", "low-fast", "high-fast" }, sol.Select(v => v!["id"]!.GetValue<string>()));
+        Assert.Equal("high", sol[3]!["body"]!["reasoning"]!["effort"]!.GetValue<string>());
+        Assert.Equal("priority", sol[3]!["body"]!["service_tier"]!.GetValue<string>());
+        Assert.Null(sol[1]!["body"]!["service_tier"]);
+        var luna = models["gpt-6-luna"]!["variants"]!.AsArray();
+        Assert.Equal("fast", Assert.Single(luna)!["id"]!.GetValue<string>());
+        Assert.Equal("priority", luna[0]!["body"]!["service_tier"]!.GetValue<string>());
+
+        // Fast unticked in dsh: the twins go and so do the OpenCode variants.
+        await f.Backend.WriteApiProviderAsync(id, OpenAiView(fast: false), "fake-key-o");
+        await f.Share.SyncAsync(first.State);
+        var after = f.OpenCodeConfig.Read()!["providers"]![id]!["models"]!.AsObject();
+        Assert.Equal(new[] { "low", "high" }, after["gpt-6.1-sol"]!["variants"]!.AsArray().Select(v => v!["id"]!.GetValue<string>()));
+        Assert.Null(after["gpt-6-luna"]!["variants"]);
+    }
+
+    [Fact]
+    public async Task TheChatGptPlanGptModelsGetFastVariantsThatKeepTheEffortAndAreWrittenOnce()
+    {
+        using var f = await SetupAsync();
+        var share = WithOpenCodeVersion(f, () => new Version(2, 4, 1));
+
+        var first = await share.SyncAsync(SharedState.Empty);
+
+        var models = f.OpenCodeConfig.Read()!["providers"]!["openai"]!["models"]!.AsObject();
+        Assert.Equal(AccountManager.Core.OpenCode.OpenCodeFastVariants.Models.OrderBy(x => x), models.Select(kv => kv.Key).OrderBy(x => x));
+        var variants = models["gpt-6.2-astra"]!["variants"]!.AsArray();
+        Assert.Equal(new[] { "low-fast", "medium-fast", "high-fast", "xhigh-fast", "max-fast" }, variants.Select(v => v!["id"]!.GetValue<string>()));
+        var xhigh = variants.Single(v => v!["id"]!.GetValue<string>() == "xhigh-fast")!;
+        Assert.Equal("xhigh", xhigh["settings"]!["reasoningEffort"]!.GetValue<string>());
+        Assert.Equal("auto", xhigh["settings"]!["reasoningSummary"]!.GetValue<string>());
+        Assert.Equal("reasoning.encrypted_content", xhigh["settings"]!["include"]![0]!.GetValue<string>());
+        Assert.Equal("priority", xhigh["body"]!["service_tier"]!.GetValue<string>());
+
+        var writes = f.OpenCodeConfig.Writes;
+        var second = await share.SyncAsync(first.State);
+        Assert.False(second.Changed);
+        Assert.Equal(writes, f.OpenCodeConfig.Writes);
+    }
+
+    [Fact]
+    public async Task FastVariantsKeepWhatTheUserAlreadyHasInTheOpenAiProvider()
+    {
+        using var f = await SetupAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(f.OpenCodeConfig.Path)!);
+        File.WriteAllText(f.OpenCodeConfig.Path, """
+            { "providers": { "openai": { "name": "mine", "models": { "gpt-6.2-astra": { "name": "Astra", "variants": [
+              { "id": "xhigh-fast", "body": { "service_tier": "flex" } }, { "id": "batch", "body": { "service_tier": "flex" } } ] } } } } }
+            """);
+
+        await WithOpenCodeVersion(f, () => new Version(2, 4, 1)).SyncAsync(SharedState.Empty);
+
+        var openai = f.OpenCodeConfig.Read()!["providers"]!["openai"]!;
+        Assert.Equal("mine", openai["name"]!.GetValue<string>());
+        var astra = openai["models"]!["gpt-6.2-astra"]!;
+        Assert.Equal("Astra", astra["name"]!.GetValue<string>());
+        var variants = astra["variants"]!.AsArray();
+        Assert.Equal(new[] { "xhigh-fast", "batch", "low-fast", "medium-fast", "high-fast", "max-fast" }, variants.Select(v => v!["id"]!.GetValue<string>()));
+        Assert.Equal("flex", variants[0]!["body"]!["service_tier"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task NoFastVariantsForAnOpenCodeBeforeVersion2OrOfAnUnknownVersion()
+    {
+        using var f = await SetupAsync();
+        await WithOpenCodeVersion(f, () => new Version(1, 19, 6)).SyncAsync(SharedState.Empty);
+        Assert.Null(f.OpenCodeConfig.Read()!["providers"]!["openai"]);
+
+        await WithOpenCodeVersion(f, () => null).SyncAsync(SharedState.Empty);
+        Assert.Null(f.OpenCodeConfig.Read()!["providers"]!["openai"]);
+    }
+
     [Fact]
     public async Task ASecondSyncWithoutChangesWritesNothing()
     {

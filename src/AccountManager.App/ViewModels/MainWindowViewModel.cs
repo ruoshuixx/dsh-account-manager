@@ -7,6 +7,7 @@ using AccountManager.Core.Models;
 using AccountManager.Core.Dsh;
 using AccountManager.Core.Quota;
 using AccountManager.Core.Sharing;
+using AccountManager.Core.Updates;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -36,8 +37,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
     /// command is invoked and no quota request is ever made.
     /// </param>
     /// <param name="settingsStore">Test seam: where the settings are saved (default: the app's own settings file).</param>
-    public MainWindowViewModel(AppServices services, IDialogService dialogs, bool startBackgroundWork = true, SettingsStore? settingsStore = null)
+    /// <param name="updates">Test seam: the release lookup (default: the public GitHub releases).</param>
+    public MainWindowViewModel(AppServices services, IDialogService dialogs, bool startBackgroundWork = true, SettingsStore? settingsStore = null, GitHubUpdateService? updates = null)
     {
+        _updates = updates ?? new GitHubUpdateService(UpdateHttp, AppUpdateInfo.Owner, AppUpdateInfo.Repository, CurrentUpdatePlatform());
         _settingsStore = settingsStore ?? new SettingsStore();
         _services = services;
         _dialogs = dialogs;
@@ -76,6 +79,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
         }
 
         if (failedUpdate is not null) { await _dialogs.ShowWarningAsync("上次升级未完成", failedUpdate); }
+
+        await RemindUpdateAsync();
     }
 
     public ObservableCollection<AccountRowViewModel> Accounts { get; } = new();
@@ -883,6 +888,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             UseResponses = OpenAiApiProtocol.UsesResponses(definition?.Package),
             HasCredential = !string.IsNullOrWhiteSpace(row.Row.CredentialId),
             HasFast = twins.Count > 0,
+            QueryModelsAsync = (url, key, recommended, ct) => _services.QueryModelsAsync(row.Row, url, key, recommended, ct),
             FastTwinIds = twins,
         };
 
@@ -894,7 +900,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IRowActions
             if (result is null) { return; }
             ReferenceResolution? resolution = null;
             // The hidden Fast twins go with a switched-off tick (or an address / protocol that no longer qualifies).
-            var keptTwins = result.Fast && ApiFastTwins.Qualifies(result.BaseUrl, result.UseResponses) ? input.FastTwinIds : Array.Empty<string>();
+            var keptTwins = result.Fast && ApiFastTwins.Qualifies(result.BaseUrl, result.UseResponses)
+                ? result.Models.Where(ApiFastTwins.CanAddTwin).Select(ApiFastTwins.TwinId).ToHashSet(StringComparer.Ordinal) : new HashSet<string>();
             var removedModels = input.Models.Concat(input.FastTwinIds)
                 .Where(m => !result.Models.Contains(m, StringComparer.Ordinal) && !keptTwins.Contains(m, StringComparer.Ordinal)).ToList();
             if (removedModels.Count > 0)

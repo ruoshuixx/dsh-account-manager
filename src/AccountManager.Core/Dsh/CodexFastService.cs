@@ -48,6 +48,9 @@ public sealed record FastSyncResult(
 public sealed class CodexFastService
 {
     public const string FastSuffix = "-fast";
+
+    internal static bool HasSpeedSuffix(string id) => id.EndsWith(FastSuffix, StringComparison.OrdinalIgnoreCase)
+        || id.EndsWith("-ultrafast", StringComparison.OrdinalIgnoreCase);
     public const string FastNameSuffix = " (Fast)";
 
     /// <summary>Said after a change that needs dsh to be restarted, and the cost rule that always applies.</summary>
@@ -282,7 +285,7 @@ public sealed class CodexFastService
         // 3) what should be there
         var selectedIds = selected?.Select(m => m.Slug).ToList();
         var twinBases = selected is not null
-            ? selected.Where(m => m.SupportsFast).Select(m => m.Slug).ToList()
+            ? selected.Where(m => m.SupportsFast && !HasSpeedSuffix(m.Slug)).Select(m => m.Slug).ToList()
             : CodexBuiltInModels.Ids.Where(presentIds.Contains).ToList();
         var baseAdds = selected?.Where(m => !presentIds.Contains(m.Slug)).ToList() ?? new List<CodexAccountModel>();
 
@@ -316,7 +319,7 @@ public sealed class CodexFastService
         {
             foreach (var b in twinBases)
             {
-                if (presentIds.Contains(b + FastSuffix)) { continue; }
+                if (presentIds.Contains(b + FastSuffix) || apiBySlug.ContainsKey(b + FastSuffix)) { continue; }
                 var userEntry = present.FirstOrDefault(p => p.Id == b)?.Entry;
                 var api = apiBySlug.GetValueOrDefault(b);
                 if (userEntry is not null && owned.Contains(b) && api?.TargetContextWindow is not null)

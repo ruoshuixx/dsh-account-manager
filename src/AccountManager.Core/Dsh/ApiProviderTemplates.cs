@@ -21,7 +21,7 @@ public static class ApiProviderTemplates
     public static IReadOnlyList<ApiProviderTemplate> All { get; } = new[]
     {
         new ApiProviderTemplate("OpenAI", "https://api.openai.com/v1", true,
-            new[] { "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna" }),
+            new[] { "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna" }),
         new ApiProviderTemplate("DeepSeek", "https://api.deepseek.com", false, new[] { "deepseek-flash", "deepseek-v4-pro" }),
         new ApiProviderTemplate("火山 Coding Plan", "https://ark.cn-beijing.volces.com/api/coding/v3", true, ArkModels),
         new ApiProviderTemplate("火山 Agent Plan", "https://ark.cn-beijing.volces.com/api/plan/v3", true, ArkModels),

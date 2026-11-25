@@ -464,9 +464,10 @@ public sealed class ExportService
         var catalog = new List<string>();
         if (JsonMerge.Get(definition, "models") is JsonObject modelsObject)
         {
+            var twins = ApiFastTwins.FindTwins(modelsObject, baseRaw, OpenAiApiProtocol.UsesResponses(package)).ToHashSet(StringComparer.Ordinal);
             foreach (var kv in modelsObject)
             {
-                if (!string.IsNullOrWhiteSpace(kv.Key)) { catalog.Add(kv.Key); }
+                if (!string.IsNullOrWhiteSpace(kv.Key) && !twins.Contains(kv.Key)) { catalog.Add(kv.Key); }
             }
         }
 

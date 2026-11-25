@@ -11,6 +11,15 @@ public class ApiFastTwinTests
 {
     private const string OpenAi = "https://api.openai.com/v1";
 
+    [Fact]
+    public void ExistingSpeedIdsAreNeverGivenAnotherFastSuffix()
+    {
+        var ids = new[] { "gpt-6.2-sol", "gpt-6.2-sol-fast", "gpt-6.2-sol-ultrafast" };
+        var catalog = new JsonObject();
+        foreach (var id in ids) { catalog[id] = new JsonObject { ["name"] = id }; }
+        Assert.Equal(ids, ApiFastTwins.Apply(catalog, null, OpenAi, true, FastTwinMode.Create).Select(p => p.Key));
+    }
+
     private const string Package = "{\n  \"name\": \"dsh-profile-tauri\",\n  \"private\": true,\n  \"dependencies\": {},\n  \"dsh\": {\n    \"profile\": {\n      \"bundles\": [\n        \"@deepseek-ai/dsh-base\"\n      ]\n    }\n  }\n}\n";
 
     private static readonly string[] Models = { "gpt-6-astra", "gpt-6.1-sol", "gpt-5.5" };

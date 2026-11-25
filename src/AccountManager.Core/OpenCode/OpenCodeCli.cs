@@ -314,6 +314,14 @@ public sealed class OpenCodeCli
         throw new OpenCodeException("无法确定 OpenCode 的全局配置目录。");
     }
 
+    /// <summary>The installed OpenCode's version (<c>opencode --version</c>); null when the output holds no version number.</summary>
+    public async Task<Version?> GetVersionAsync(CancellationToken cancellationToken = default)
+    {
+        var output = await RunAsync(new[] { "--version" }, logFailures: false, cancellationToken).ConfigureAwait(false);
+        var match = System.Text.RegularExpressions.Regex.Match(output, @"\d+\.\d+\.\d+");
+        return match.Success && Version.TryParse(match.Value, out var version) ? version : null;
+    }
+
     private static void TryKill(Process process)
     {
         try { process.Kill(entireProcessTree: true); } catch { /* ignore */ }

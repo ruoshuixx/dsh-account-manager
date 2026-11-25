@@ -77,6 +77,35 @@ public class DialogTests
     }
 
     [AvaloniaFact]
+    public async Task QueryInEditorUsesBlankKeyAndOnlyChangesDraft()
+    {
+        var owner = new Window();
+        owner.Show();
+        try
+        {
+            var pending = ApiConfigDialog.ShowAsync(owner, new ApiConfigInput
+            {
+                BaseUrl = "https://api.openai.com/v1", Models = new[] { "old-fast-fast" }, HasCredential = true,
+                QueryModelsAsync = (url, key, recommended, ct) =>
+                {
+                    Assert.Equal("https://api.openai.com/v1", url);
+                    Assert.Empty(key);
+                    return Task.FromResult(new ModelQueryResult(recommended ? new[] { "gpt-6.2-sol" } : new[] { "tts-1", "gpt-6.2-sol" }, "test"));
+                },
+            });
+            var dialog = owner.OwnedWindows.OfType<ApiConfigDialog>().Single();
+            Click(dialog, "查询官方模型并替换列表");
+            Assert.Equal("gpt-6.2-sol", dialog.FindControl<TextBox>("ModelsBox")!.Text);
+            dialog.FindControl<CheckBox>("LatestGptBox")!.IsChecked = false;
+            Click(dialog, "查询官方模型并替换列表");
+            Assert.Equal($"tts-1{Environment.NewLine}gpt-6.2-sol", dialog.FindControl<TextBox>("ModelsBox")!.Text);
+            Click(dialog, "取消");
+            Assert.Null(await pending);
+        }
+        finally { owner.Close(); }
+    }
+
+    [AvaloniaFact]
     public async Task ConfigOnlyEditorAllowsNameAndFirstKeyAndParsesCommaSeparatedModels()
     {
         var owner = new Window();
@@ -492,7 +521,7 @@ public class DialogTests
             name.SelectedItem = null;
             name.SelectedItem = "OpenAI";
             Assert.Equal("https://api.openai.com/v1", url.Text);
-            Assert.Equal("gpt-6-astra", models.Text!.Split('\n', '\r').First(l => l.Length > 0));
+            Assert.Equal("gpt-6.2-astra", models.Text!.Split('\n', '\r').First(l => l.Length > 0));
             Assert.True(dialog.FindControl<RadioButton>("ResponsesRadio")!.IsChecked);
             Assert.Contains("xhigh", dialog.FindControl<TextBlock>("AutoConfigText")!.Text);
             Assert.True(dialog.FindControl<CheckBox>("FastBox")!.IsVisible);
@@ -586,7 +615,7 @@ public class DialogTests
             dialog.UpdateLayout();
             Assert.Equal("OpenAI", vm.DisplayName);
             Assert.Equal("https://api.openai.com/v1", vm.BaseUrl);
-            Assert.StartsWith("gpt-6-astra", vm.ModelsText);
+            Assert.StartsWith("gpt-6.2-astra", vm.ModelsText);
             Assert.True(vm.UseResponses);
             Assert.Equal(string.Empty, vm.ApiKey); // the key is never touched
             Assert.True(vm.ShowFastOption);
@@ -630,6 +659,8 @@ public class DialogTests
     private sealed class FakeAddServices : IAddAccountServices
     {
         public SecretRegistry Secrets { get; } = new(false);
+        public Task<ModelQueryResult> QueryModelsAsync(string url, string key, bool recommended, CancellationToken ct)
+            => Task.FromResult(new ModelQueryResult(new[] { "gpt-example", "gpt-example-fast" }, "test"));
         public int Writes;
         public bool UseResponses;
         public bool Fast;

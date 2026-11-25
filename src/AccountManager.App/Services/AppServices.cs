@@ -50,7 +50,8 @@ public sealed class AppServices : IAddAccountServices
         var openCodeCredentials = openCodeApi ?? new OpenCodeApi(OpenCodeCli, Secrets);
         OpenCodeAccounts = new OpenCodeAccountStore(openCodeCredentials, Secrets, Log);
         CodexApi = new CodexApiConfig(CodexCli, Backups, Path.Combine(Vault.Directory, "codex-api.json"));
-        Share = new ApiShareService(Backend, CodexApi, openCodeCredentials, openCodeConfig ?? new OpenCodeConfigFile(OpenCodeCli), Secrets, Log, Backups);
+        Share = new ApiShareService(Backend, CodexApi, openCodeCredentials, openCodeConfig ?? new OpenCodeConfigFile(OpenCodeCli), Secrets, Log, Backups,
+            openCodeApi is null ? OpenCodeCli.GetVersionAsync : null);
         Mirror = new DshProfileMirror(() => Backend.Home, Backups, Log);
         Targets = new SwitchTargets(Backend, Vault, CodexCli, OpenCodeAccounts, Secrets, Log, () => Settings.SwitchTarget, CodexApi);
         Backend.TargetRefresher = Targets.RefreshIfCurrentAsync;
@@ -262,6 +263,31 @@ public sealed class AppServices : IAddAccountServices
 
     public Task<string> ApplyReferenceActionsAsync(IReadOnlyList<ReferenceAction> actions, CancellationToken ct = default)
         => References.ApplyAsync(actions, ct);
+
+    private readonly OfficialModelList _modelList = new();
+
+    public Task<ModelQueryResult> QueryModelsAsync(string url, string key, bool recommended, CancellationToken ct)
+        => _modelList.QueryAsync(url, key, recommended, ct);
+
+    public async Task<ModelQueryResult> QueryModelsAsync(AccountRow row, string url, string key, bool recommended, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(key)) { return await QueryModelsAsync(url, key, recommended, ct).ConfigureAwait(false); }
+        var target = OfficialModelList.MatchBase(url);
+        if (target is null || target != OfficialModelList.MatchBase(row.Definition?.EditableBaseUrl ?? row.BaseUrl) || string.IsNullOrEmpty(row.CredentialId))
+            throw new DshException("请为当前官方地址填写 API Key 后再查询。");
+
+        // Compare the actual configured URL, not just the UI projection (which strips query/userinfo).
+        var providers = AccountMapper.GetProviderDefinitions(await Backend.GetConfigEntriesAsync(ct).ConfigureAwait(false));
+        if (!providers.TryGetValue(row.Provider, out var provider) ||
+            target != OfficialModelList.MatchBase(JsonMerge.GetString(JsonMerge.Get(provider, "settings"), "baseURL")))
+            throw new DshException("供应商地址已变化，请重新打开配置或填写当前地址的 API Key。");
+        var creds = await Backend.GetCredentialsAsync(ct).ConfigureAwait(false);
+        var matches = creds.Where(c => JsonMerge.GetString(c, "id") == row.CredentialId &&
+            JsonMerge.GetString(c, "integrationID") == row.Provider).ToList();
+        var value = matches.Count == 1 ? JsonMerge.Get(matches[0], "value") : null;
+        if (JsonMerge.GetString(value, "type") != "key") { throw new DshException("未找到该供应商的本地 API Key。"); }
+        return await _modelList.QueryAsync(url, JsonMerge.GetString(value, "key"), recommended, ct).ConfigureAwait(false);
+    }
 
     public async Task<ApiSaveResult> SaveApiAsync(AccountRow row, string displayName, string baseUrl, IReadOnlyList<string> models, string? newKey, CancellationToken ct = default)
     {

@@ -56,6 +56,8 @@
             <TextBlock Text="{Binding AutoConfigHint}" Classes="subtitle" TextWrapping="Wrap" IsVisible="{Binding AutoConfigHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
             <TextBlock Text="API Key" FontWeight="SemiBold" />
             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" PasswordChar="*" Watermark="填写供应商提供的密钥" />
+            <CheckBox Content="仅推荐模型（按 OpenAI 官方选型指南）" IsVisible="{Binding ShowGptFilter}" IsChecked="{Binding LatestGptOnly, Mode=TwoWay}" />
+            <Button Content="查询官方模型并填入列表" Classes="toolbar" Command="{Binding QueryModelsCommand}" HorizontalAlignment="Left" />
             <TextBlock Text="API 协议" FontWeight="SemiBold" Margin="0,2,0,0" />
             <StackPanel Orientation="Horizontal" Spacing="16">
               <RadioButton GroupName="ApiProtocol" Content="Chat Completions" IsChecked="{Binding UseChat, Mode=TwoWay}" />

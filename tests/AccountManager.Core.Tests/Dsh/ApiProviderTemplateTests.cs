@@ -19,7 +19,7 @@ public class ApiProviderTemplateTests
         var openai = Template("OpenAI");
         Assert.Equal(OpenAi, openai.BaseUrl);
         Assert.True(openai.UseResponses);
-        Assert.Equal(new[] { "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna" }, openai.Models);
+        Assert.Equal(new[] { "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna" }, openai.Models);
         Assert.Equal("https://ark.cn-beijing.volces.com/api/coding/v3", Template("火山 Coding Plan").BaseUrl);
         Assert.Equal("https://ark.cn-beijing.volces.com/api/plan/v3", Template("火山 Agent Plan").BaseUrl);
         Assert.Equal(new[] { "ark-code-latest", "deepseek-v4.1-flash", "glm-5.3-flash", "kimi-k2.7-code", "minimax-m3", "doubao-seed-2.1-turbo", "glm-5.3", "doubao-seed-evolving", "deepseek-v4-pro" },

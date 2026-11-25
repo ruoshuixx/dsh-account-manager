@@ -10,6 +10,7 @@ namespace AccountManager.App.Services;
 public interface IAddAccountServices
 {
     SecretRegistry Secrets { get; }
+    Task<ModelQueryResult> QueryModelsAsync(string url, string key, bool recommended, CancellationToken ct);
     CodexOAuthService CreateOAuthService();
 
     /// <summary>

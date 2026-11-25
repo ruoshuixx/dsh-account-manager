@@ -65,11 +65,80 @@ public sealed class SwitchTargetViewModelTests : IDisposable
     }
 
     /// <summary>A view model on dsh as the target: accounts are seeded first, then a test selects its target.</summary>
-    private (AppServices Services, MainWindowViewModel Vm, ScriptedDialogs Dialogs) NewVm(bool confirm = true)
+    private (AppServices Services, MainWindowViewModel Vm, ScriptedDialogs Dialogs) NewVm(bool confirm = true, AccountManager.Core.Updates.GitHubUpdateService? updates = null)
     {
         var services = NewServices(new AppSettings { SwitchTarget = SwitchTarget.Dsh });
         var dialogs = new ScriptedDialogs { Confirm = confirm };
-        return (services, new MainWindowViewModel(services, dialogs, startBackgroundWork: false, settingsStore: new SettingsStore(_settingsPath)), dialogs);
+        return (services, new MainWindowViewModel(services, dialogs, startBackgroundWork: false, settingsStore: new SettingsStore(_settingsPath), updates: updates), dialogs);
+    }
+
+    // ---- the reminder at every start ----------------------------------------------------------
+
+    private static AccountManager.Core.Updates.GitHubUpdateService UpdatesReturning(Func<System.Net.Http.HttpResponseMessage> response)
+        => new(new System.Net.Http.HttpClient(new FakeReleaseHandler(response)), AppUpdateInfo.Owner, AppUpdateInfo.Repository, AccountManager.Core.Updates.UpdatePlatform.WindowsX64);
+
+    private static System.Net.Http.HttpResponseMessage ReleaseResponse(string version)
+    {
+        var tag = "v" + version;
+        var exe = "AIAccountManager-" + version + "-win-x64.exe";
+        var baseUrl = $"https://github.com/{AppUpdateInfo.Owner}/{AppUpdateInfo.Repository}/releases/download/{tag}/";
+        var json = new JsonObject
+        {
+            ["tag_name"] = tag,
+            ["draft"] = false,
+            ["prerelease"] = false,
+            ["html_url"] = $"https://github.com/{AppUpdateInfo.Owner}/{AppUpdateInfo.Repository}/releases/tag/{tag}",
+            ["body"] = "notes",
+            ["assets"] = new JsonArray
+            {
+                new JsonObject { ["name"] = exe, ["size"] = 9, ["browser_download_url"] = baseUrl + exe },
+                new JsonObject { ["name"] = exe + ".sha256", ["size"] = 80, ["browser_download_url"] = baseUrl + exe + ".sha256" },
+            },
+        };
+        return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new System.Net.Http.StringContent(json.ToJsonString(), Encoding.UTF8, "application/json") };
+    }
+
+    private sealed class FakeReleaseHandler(Func<System.Net.Http.HttpResponseMessage> response) : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(response());
+    }
+
+    [Fact]
+    public async Task ANewerReleaseIsAskedAboutAtStart()
+    {
+        var (_, vm, dialogs) = NewVm(confirm: false, updates: UpdatesReturning(() => ReleaseResponse("99.0.0")));
+
+        await vm.RemindUpdateAsync();
+
+        Assert.True(vm.HasUpdate);
+        // Where this build can update itself the same question as the "检查更新" button is asked; elsewhere the download page is shown.
+        if (DebInstallUpdater.IsSupported || SelfUpdater.IsSupported)
+        {
+            Assert.Contains("v99.0.0", Assert.Single(dialogs.Confirms));
+        }
+        else
+        {
+            Assert.Contains(AppUpdateInfo.ReleaseUrl, Assert.Single(dialogs.Infos));
+        }
+    }
+
+    [Fact]
+    public async Task NoNewerReleaseOrAFailedCheckAsksNothingAtStart()
+    {
+        var (_, upToDate, upToDateDialogs) = NewVm(updates: UpdatesReturning(() => ReleaseResponse("0.0.1")));
+        await upToDate.RemindUpdateAsync();
+        Assert.False(upToDate.HasUpdate);
+        Assert.Empty(upToDateDialogs.Confirms);
+        Assert.Empty(upToDateDialogs.Infos);
+        Assert.Empty(upToDateDialogs.Warnings);
+
+        var (_, failed, failedDialogs) = NewVm(updates: UpdatesReturning(() => new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError)));
+        await failed.RemindUpdateAsync();
+        Assert.False(failed.HasUpdate);
+        Assert.Empty(failedDialogs.Confirms);
+        Assert.Empty(failedDialogs.Infos);
+        Assert.Empty(failedDialogs.Warnings);
     }
 
     private static string Jwt(string email, string accountId, long exp = 4102444800L, string plan = "plus", long? iat = null)
@@ -845,8 +914,9 @@ public sealed class SwitchTargetViewModelTests : IDisposable
         public Action? OnConfirm { get; set; }
         public List<string> Confirms { get; } = new();
         public List<string> Warnings { get; } = new();
+        public List<string> Infos { get; } = new();
         public Task<bool> ConfirmAsync(string title, string message, bool dangerous = false) { Confirms.Add(title + "\n" + message); OnConfirm?.Invoke(); return Task.FromResult(Confirm); }
-        public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
+        public Task ShowInfoAsync(string title, string message) { Infos.Add(title + "\n" + message); return Task.CompletedTask; }
         public Task ShowWarningAsync(string title, string message) { Warnings.Add(message); return Task.CompletedTask; }
         public Task<string?> PickOpenFileAsync(string title, string suggestedName) => Task.FromResult<string?>(null);
         public Task<string?> PickSaveFileAsync(string title, string suggestedName) => Task.FromResult<string?>(null);

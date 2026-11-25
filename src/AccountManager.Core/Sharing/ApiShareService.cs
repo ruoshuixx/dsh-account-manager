@@ -10,8 +10,11 @@ namespace AccountManager.Core.Sharing;
 /// <summary>One API provider as dsh has it: what OpenCode and Codex get.</summary>
 public sealed record SharedApi(string Id, string Name, string BaseUrl, bool UsesResponses, IReadOnlyList<SharedModel> Models, string Key);
 
-/// <summary><paramref name="Variants"/>: the view's reasoning tiers (<c>{id, body.reasoning.effort}</c>), null when none.</summary>
-public sealed record SharedModel(string Id, string Name, JsonArray? Variants);
+/// <summary>
+/// <paramref name="Variants"/>: the view's reasoning tiers (<c>{id, body.reasoning.effort}</c>), null when none.
+/// <paramref name="Fast"/>: the model has a Fast twin in dsh (ticked "Fast" for its API); OpenCode gets <c>*-fast</c> variants for it.
+/// </summary>
+public sealed record SharedModel(string Id, string Name, JsonArray? Variants, bool Fast = false);
 
 /// <summary>
 /// Managed dsh API ids available to each program. Previous Codex ids also identify legacy per-API tables to remove.
@@ -40,11 +43,18 @@ public sealed class ApiShareService
     private readonly SecretRegistry _secrets;
     private readonly AppLog? _log;
     private readonly BackupService? _backups;
+    private readonly Func<CancellationToken, Task<Version?>>? _openCodeVersion;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>The first OpenCode that has the <c>experimental.model_speeds</c> switch (speed tiers such as Fast for ChatGPT models).</summary>
+    public static readonly Version ModelSpeedsMinimumVersion = new(2, 4, 1);
+
+    /// <param name="openCodeVersion">Tells the installed OpenCode's version; without it the speed switch is never written (an older OpenCode may reject an unknown key).</param>
     public ApiShareService(IAccountBackend dsh, CodexApiConfig codex, IOpenCodeCredentialApi openCodeApi,
-        IOpenCodeConfigFile openCodeConfig, SecretRegistry secrets, AppLog? log = null, BackupService? backups = null)
+        IOpenCodeConfigFile openCodeConfig, SecretRegistry secrets, AppLog? log = null, BackupService? backups = null,
+        Func<CancellationToken, Task<Version?>>? openCodeVersion = null)
     {
+        _openCodeVersion = openCodeVersion;
         _backups = backups;
         _dsh = dsh ?? throw new ArgumentNullException(nameof(dsh));
         _codex = codex ?? throw new ArgumentNullException(nameof(codex));
@@ -87,7 +97,7 @@ public sealed class ApiShareService
                             .Where(v => ProviderViewMapper.ReadString(v["body"]?["reasoning"], "effort") is not null)
                             .Select(v => (JsonNode)v.DeepClone()).ToArray();
                         models.Add(new SharedModel(modelId, ProviderViewMapper.ReadString(model, "name") ?? modelId,
-                            variants is { Length: > 0 } ? new JsonArray(variants) : null));
+                            variants is { Length: > 0 } ? new JsonArray(variants) : null, twins.Contains(ApiFastTwins.TwinId(modelId))));
                     }
                 }
 
@@ -185,6 +195,10 @@ public sealed class ApiShareService
             configChanged |= providers.Remove(id);
         }
 
+        var openCodeVersion = await TryGetOpenCodeVersionAsync(ct).ConfigureAwait(false);
+        configChanged |= EnsureModelSpeeds(config, openCodeVersion);
+        configChanged |= EnsureFastVariants(config, openCodeVersion);
+
         // Keys first: a provider without its credential would fail in OpenCode, a credential without provider is inert.
         var credentials = (await _openCodeApi.GetCredentialsAsync(ct).ConfigureAwait(false)).OfType<JsonObject>().ToList();
         var credentialsChanged = false;
@@ -236,12 +250,86 @@ public sealed class ApiShareService
         return (wantedIds.ToList(), configChanged || credentialsChanged);
     }
 
+    /// <summary>
+    /// Turns on OpenCode's speed tiers (<c>experimental.model_speeds</c>: Fast for ChatGPT-plan GPT models, <c>/fast</c>, the speed
+    /// dropdown) when the installed OpenCode has the switch. A value the user already set (either way) is never changed, and an
+    /// unknown or older OpenCode is left alone.
+    /// </summary>
+    private bool EnsureModelSpeeds(JsonObject config, Version? version)
+    {
+        if (config["experimental"] is JsonObject existing)
+        {
+            if (existing.ContainsKey("model_speeds")) { return false; }
+        }
+        else if (config["experimental"] is not null)
+        {
+            return false;
+        }
+
+        if (version is null || version < ModelSpeedsMinimumVersion) { return false; }
+        var experimental = config["experimental"] as JsonObject ?? new JsonObject();
+        experimental["model_speeds"] = true;
+        config["experimental"] = experimental;
+        _log?.Info("已在 OpenCode 配置里打开速度选项（experimental.model_speeds）");
+        return true;
+    }
+
+    /// <summary>Fast variants for the ChatGPT-plan GPT models (<see cref="OpenCodeFastVariants"/>), for an OpenCode that reads the V2 config.</summary>
+    private bool EnsureFastVariants(JsonObject config, Version? version)
+    {
+        if (version is null || version < OpenCodeFastVariants.MinimumOpenCodeVersion) { return false; }
+        if (!OpenCodeFastVariants.Apply(config)) { return false; }
+        _log?.Info("已在 OpenCode 配置里给 ChatGPT 订阅的 GPT 模型加上 Fast 档位（*-fast）");
+        return true;
+    }
+
+    private async Task<Version?> TryGetOpenCodeVersionAsync(CancellationToken ct)
+    {
+        if (_openCodeVersion is null) { return null; }
+        try { return await _openCodeVersion(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.Info("未能读取 OpenCode 版本，未设置速度选项：" + _secrets.Redact(ex.Message));
+            return null;
+        }
+    }
+
     /// <summary>Exactly one credential for the provider, holding this key.</summary>
     private static bool HasKey(IReadOnlyList<JsonObject> credentials, SharedApi api)
     {
         var mine = credentials.Where(c => JsonMerge.GetString(c, "integrationID") == api.Id).ToList();
         return mine.Count == 1 && JsonMerge.GetString(JsonMerge.Get(mine[0], "value"), "type") == "key"
             && JsonMerge.GetString(JsonMerge.Get(mine[0], "value"), "key") == api.Key;
+    }
+
+    /// <summary>
+    /// The model's reasoning variants, and for a model with a Fast twin in dsh one <c>&lt;tier&gt;-fast</c> variant per tier: the same body plus
+    /// <c>service_tier: "priority"</c> (a lone <c>fast</c> variant when the model has no tiers). OpenCode has no plugin that understands the
+    /// twin model dsh uses, so Fast is a variant of the base model there. Null when the model has neither.
+    /// </summary>
+    private static JsonArray? WithFastVariants(SharedModel model)
+    {
+        var result = new JsonArray();
+        if (model.Variants is not null) { foreach (var variant in model.Variants) { result.Add(variant?.DeepClone()); } }
+        if (model.Fast)
+        {
+            var tiers = model.Variants?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
+            if (tiers.Count == 0)
+            {
+                result.Add(new JsonObject { ["id"] = "fast", ["body"] = new JsonObject { ["service_tier"] = "priority" } });
+            }
+
+            foreach (var tier in tiers)
+            {
+                var id = JsonMerge.GetString(tier, "id");
+                if (string.IsNullOrEmpty(id)) { continue; }
+                var body = tier["body"] is JsonObject b ? (JsonObject)b.DeepClone() : new JsonObject();
+                body["service_tier"] = "priority";
+                result.Add(new JsonObject { ["id"] = id + CodexFastService.FastSuffix, ["body"] = body });
+            }
+        }
+
+        return result.Count > 0 ? result : null;
     }
 
     /// <summary>An OpenCode V2 provider entry. Reasoning tiers only for Responses: that is where OpenCode sends <c>reasoning.effort</c>.</summary>
@@ -254,7 +342,8 @@ public sealed class ApiShareService
         foreach (var model in api.Models)
         {
             var entry = new JsonObject { ["name"] = model.Name };
-            if (api.UsesResponses && model.Variants is not null) { entry["variants"] = model.Variants.DeepClone(); }
+            var variants = api.UsesResponses ? WithFastVariants(model) : null;
+            if (variants is not null) { entry["variants"] = variants; }
             models[model.Id] = entry;
         }
 

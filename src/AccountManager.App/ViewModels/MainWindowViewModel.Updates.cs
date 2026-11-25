@@ -11,7 +11,7 @@ public sealed partial class MainWindowViewModel
 {
     // Dedicated public-download client: never shares account requests or authorization headers.
     private static readonly HttpClient UpdateHttp = new(new HttpClientHandler { Proxy = AccountManager.Core.Net.SystemProxy.Instance, UseProxy = true }) { Timeout = Timeout.InfiniteTimeSpan };
-    private readonly GitHubUpdateService _updates = new(UpdateHttp, AppUpdateInfo.Owner, AppUpdateInfo.Repository, CurrentUpdatePlatform());
+    private readonly GitHubUpdateService _updates;
     private UpdateRelease? _availableUpdate;
     private CancellationTokenSource? _updateCancellation;
 
@@ -33,6 +33,17 @@ public sealed partial class MainWindowViewModel
 
     [RelayCommand]
     private Task CheckUpdatesAsync() => CheckForUpdatesAsync(silent: false);
+
+    /// <summary>
+    /// Every start: look for a newer release quietly (no dialog when there is none or the check fails) and, when there is one, ask
+    /// the same question the "检查更新" button asks. Declining leaves the toolbar's new-version hint in place.
+    /// </summary>
+    internal async Task RemindUpdateAsync()
+    {
+        await CheckForUpdatesAsync(silent: true);
+        if (_availableUpdate is null || IsBusy || IsQuotaBusy || IsUpdating) { return; }
+        await InstallUpdateAsync();
+    }
 
     private async Task CheckForUpdatesAsync(bool silent)
     {

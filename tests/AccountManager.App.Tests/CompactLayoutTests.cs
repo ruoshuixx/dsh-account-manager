@@ -492,6 +492,7 @@ public sealed class CompactLayoutTests : IDisposable
 
     private sealed class FakeAddServices : IAddAccountServices
     {
+        public Task<ModelQueryResult> QueryModelsAsync(string url, string key, bool recommended, CancellationToken ct) => throw new NotSupportedException();
         public SecretRegistry Secrets { get; } = new(false);
         public CodexOAuthService CreateOAuthService() => throw new InvalidOperationException();
         public IBrowserOAuthSession StartBrowserOAuthSession() => throw new InvalidOperationException();

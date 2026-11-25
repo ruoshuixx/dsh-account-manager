@@ -1,3 +1,4 @@
+using AccountManager.Core.Actions;
 using AccountManager.Core.Dsh;
 using AccountManager.Core.Models;
 using AccountManager.Core.Quota;
@@ -21,6 +22,7 @@ public sealed class ApiConfigInput
 
     /// <summary>True when a local key credential exists (blank key preserves it).</summary>
     public bool HasCredential { get; init; }
+    public Func<string, string, bool, CancellationToken, Task<ModelQueryResult>>? QueryModelsAsync { get; init; }
 
     /// <summary>The provider has Fast twin models (hidden from <see cref="Models"/>); the dialog's Fast tick starts from this.</summary>
     public bool HasFast { get; init; }

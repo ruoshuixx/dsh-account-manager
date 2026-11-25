@@ -17,6 +17,8 @@
   - **dsh**：把目标账号写成 dsh 当前的 Codex 凭据（dsh 运行中会热加载，不用重启）。不再顺带写 Codex 的 `auth.json`。
   - **Codex**：把账号写进 `$CODEX_HOME/auth.json`（默认 `~/.codex/auth.json`，设置里可改目录；Codex CLI 与桌面版共用这个文件，已打开的桌面版需重启才生效）。写之前先加密备份、原子替换并保持 0600、保留文件里其它键；目录不存在（不会创建）、凭据存在系统密钥环、文件只读 / 格式不认识 / 是 API Key 登录时，切号失败并说明原因，什么都不改。
   - **OpenCode**：通过 OpenCode 的命令行（`opencode api …`）把账号设为 OpenCode 里 `openai` 的当前 OAuth 凭据：OpenCode 里已有同一账号的凭据就复用（账号库的令牌更新时先换成新令牌）再激活，没有就新建并激活。需要已安装 OpenCode；找不到命令行时切号失败并提示，设置里的“OpenCode 命令路径”可手动指定（留空自动检测）。
+  - **OpenCode 速度选项（Fast）**：同步 API 时，如果装的 OpenCode 不低于 2.0，本工具会在 `opencode.json` 的 `providers.openai`（ChatGPT 订阅登录用的内置提供商）里，给 GPT-6.2 Astra / Sol、GPT-6.1 Sol / Terra、GPT-6 Astra / Luna 各加 `low-fast`、`medium-fast`、`high-fast`、`xhigh-fast`、`max-fast` 五个变体：设置照抄 OpenCode 自己的同强度变体，再加 `service_tier: "priority"`（Codex 的 Fast 用的就是它）。这样不依赖 OpenCode 能否下载 models.dev 目录。已有的同名变体不会被改。OpenCode 不低于 2.4.1 时还会打开 `experimental.model_speeds`（OpenCode 自带的速度选项，要能下载 models.dev 才有内容）；你自己设过的值（包括 `false`）不会被改。写前照常备份。
+  - **API 的 Fast 同步给 OpenCode**：dsh 里勾了“Fast”的 API（官方 OpenAI 地址、Responses 协议），同步到 OpenCode 时，对有 Fast 孪生模型的模型，在它的变体里加 `<档位>-fast`：照抄该档位的请求体（`reasoning.effort`），再加 `service_tier: "priority"`；没有档位的模型加一个 `fast` 变体。孪生模型本身不共享（OpenCode 没有 dsh 的 Fast 插件）。取消勾选后，下次同步这些变体就没了。Fast 按官方更高单价计费。
   - **为什么只能选一个**：同一个 refresh token 被多个程序同时用，其中一个刷新后，别的程序再用就会报 `refresh_token_reused`。所以切号前如果该账号正是另一个程序（目标之外的 dsh / Codex / OpenCode）当前在用的账号，手动切号会先弹确认说明风险；自动切号直接跳过这类账号。
   - 切号前，先把 dsh、Codex 的 `auth.json`、OpenCode 里同一账号**较新**的令牌写回账号库（用 Codex 自己登录、账号库里还没有的账号也会先收进账号库），保证账号库里永远是最新的 refresh token。
   - 账号列表的“当前”标记跟着所选目标走（dsh 看它的授权、Codex 看 `auth.json`、OpenCode 看当前的 openai 凭据）。状态栏会写明切的是哪个：“已切换 OpenCode 账号：…”。
@@ -27,6 +29,8 @@
 - **管理 API 供应商**：读写档案里的 `cordis.patch.yml`（`llm-pi-ai` 的 `config.providers`）和凭据文件里的 Key 引用，
   支持新增、编辑（名称 / 地址 / 模型 / Chat Completions 或 Responses 协议 / 换 Key）、删除。只替换被修改的那个供应商的文本。
   - **模板**：添加 / 编辑窗口的“供应商名称”是可编辑下拉框，内置 OpenAI、火山 Coding Plan、火山 Agent Plan 三个模板；选中模板时只填空着的 URL 和模型（已填的不动），协议只在 URL 被填入时跟着模板走，API Key 不动；仍可输入自定义名称。
+  - **查询官方模型**：添加 / 编辑 API 时可点查询，按当前 Key 从 OpenAI 或火山方舟北京区的 `<baseURL>/models` 填入最新 ID。套餐之间不混用列表。可先删去不需要的 ID，保存后按现有规则共享给 Codex（Responses 供应商）。DSH 的 Fast 别名不会再次生成 `-fast-fast`，由本工具生成的别名不随 Cockpit 模型清单导出。OpenAI 的离线模板也包含 `gpt-6.2-astra` 和 `gpt-6.2-sol`。
+  查询 OpenAI 的推荐模型时，实时读取官方选型指南并与 Key 的可见 ID 取交集；指南不可读或无匹配时按可见的通用 GPT 版本及各系列最新版筛选。取消“仅推荐模型”可查询全部。Coding Plan 遇到 404、405 或空列表时，匿名读取官方[支持的模型](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-plan-overview#supported-models)表，标明文档来源，不视为账号权限证明。
   - **思考程度**：Responses 协议下，火山方舟 Coding / Agent Plan 按方舟文档给支持的模型配置档位；OpenAI 官方 API（`https://api.openai.com/v1`）的 GPT-6 系列（`gpt-6`、`gpt-6.1-sol` 等）配置 low / medium / high / xhigh / max。只补没有档位的模型，已有的不覆盖。
   - **上下文与输出上限**：OpenAI 官方 API 的 GPT-6 系列写入官方上限：`contextWindow` 922000（官方最大输入；总窗口 1,050,000）、`maxTokens` 128000、`input` 文字和图片。dsh 对没有内置资料的供应商默认只有 262144 / 32768 / 仅文字。只补缺的项，你设过的值不改。单次输入超过 272K token 时 OpenAI 按长上下文价计费（输入 2 倍、输出 1.5 倍）。
   - **DeepSeek 官方 API**（模板“DeepSeek”，`https://api.deepseek.com`，Chat Completions）：`deepseek-flash`（V4.1-Flash，支持图片）和 `deepseek-v4-pro`（仅文字）写入思考程度 low / high / max、`contextWindow` 1000000、`maxTokens` 384000；只补缺的项。
@@ -97,7 +101,7 @@ sudo apt remove dsh-account-manager                          # 卸载
 
 ### 程序内升级
 
-在主界面或托盘手动点“检查更新”（启动时不会自动联网检查）。发现新版后确认一次，程序下载对应资产、校验 SHA-256，然后：
+每次启动软件时，会在后台静默检查一次更新：有新版就弹出升级提示（看到更新说明，确认后才下载），没有新版或检查失败（比如没网）不会打扰你；点“取消”以后工具栏上仍会显示有新版。也可以随时在主界面或托盘手动点“检查更新”。发现新版后确认一次，程序下载对应资产、校验 SHA-256，然后：
 
 - Windows：替换自身并重启。
 - Ubuntu（.deb 安装）：下载完成后退出，弹出系统的管理员授权窗口（polkit），自动安装新 .deb 并启动新版；授权被取消或安装失败时仍启动旧版，并在下次启动时提示原因。

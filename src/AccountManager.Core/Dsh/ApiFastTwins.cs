@@ -31,6 +31,8 @@ public static class ApiFastTwins
 
     public static string TwinId(string baseId) => baseId + CodexFastService.FastSuffix;
 
+    public static bool CanAddTwin(string id) => ModelVariantBuilder.IsGpt6Family(id) && !CodexFastService.HasSpeedSuffix(id);
+
     private static bool HasOurShape(string id, JsonNode? entry, JsonObject models)
         => id.Length > CodexFastService.FastSuffix.Length
            && id.EndsWith(CodexFastService.FastSuffix, StringComparison.Ordinal)
@@ -69,7 +71,7 @@ public static class ApiFastTwins
         foreach (var (id, entry) in merged)
         {
             result[id] = entry?.DeepClone();
-            if (!ModelVariantBuilder.IsGpt6Family(id)) { continue; }
+            if (!CanAddTwin(id)) { continue; }
             var twinId = TwinId(id);
             if (merged.ContainsKey(twinId)) { continue; }
             var oldTwin = old is JsonObject oldList && oldList[twinId] is JsonObject o && HasOurShape(twinId, o, oldList) ? o : null;

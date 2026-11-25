@@ -21,6 +21,7 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
     private Task _cleanup = Task.CompletedTask;
     private int _generation;
     private bool _disposed;
+    private CancellationTokenSource? _modelQuery;
 
     public AddAccountViewModel(
         IAddAccountServices services,
@@ -73,6 +74,9 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
     public bool CanSubmitCallback => CanOperate && IsOAuthTab && WaitingForAuthorization && !string.IsNullOrWhiteSpace(CallbackUrl);
     public bool CanSaveOAuth => CanOperate && IsOAuthTab && AuthorizationReady;
     public bool CanSaveApi => CanOperate && IsApiTab;
+    [ObservableProperty] private bool _latestGptOnly = true;
+    public bool ShowGptFilter => OpenAiModelFilter.AppliesTo(OfficialModelList.MatchBase(BaseUrl));
+    public bool CanQueryModels => CanSaveApi && OfficialModelList.MatchBase(BaseUrl) is not null && !string.IsNullOrWhiteSpace(ApiKey);
     public bool HasAuthorizationUrl => !string.IsNullOrEmpty(AuthorizationUrl);
     public bool IsOAuthTab => SelectedTabIndex == 0;
     public bool IsApiTab => SelectedTabIndex == 1;
@@ -96,7 +100,8 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
         OnPropertyChanged(nameof(UseChat));
         NotifyApiHints();
     }
-    partial void OnBaseUrlChanged(string value) => NotifyApiHints();
+    partial void OnBaseUrlChanged(string value) { NotifyApiHints(); OnPropertyChanged(nameof(ShowGptFilter)); QueryModelsCommand.NotifyCanExecuteChanged(); }
+    partial void OnApiKeyChanged(string value) => QueryModelsCommand.NotifyCanExecuteChanged();
 
     partial void OnSelectedTemplateChanged(string? value)
     {
@@ -128,6 +133,7 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
         }
         else
         {
+            _modelQuery?.Cancel();
             StatusText = "正在准备授权链接 …";
             _ = PrimeAuthorizationAsync();
         }
@@ -146,6 +152,30 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
         SubmitCallbackCommand.NotifyCanExecuteChanged();
         SaveOAuthCommand.NotifyCanExecuteChanged();
         SaveApiCommand.NotifyCanExecuteChanged();
+        QueryModelsCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanQueryModels))]
+    private async Task QueryModelsAsync()
+    {
+        if (!CanQueryModels) { return; }
+        using var query = new CancellationTokenSource();
+        _modelQuery = query;
+        var (url, key, previous) = (BaseUrl, ApiKey, ModelsText);
+        IsBusy = true;
+        ErrorText = string.Empty;
+        StatusText = "正在查询官方模型列表 …";
+        try
+        {
+            var result = await _services.QueryModelsAsync(url, key, LatestGptOnly, query.Token);
+            if (query.IsCancellationRequested) { return; }
+            if (url != BaseUrl || key != ApiKey || previous != ModelsText) { StatusText = "输入已更改，请重新查询。"; return; }
+            ModelsText = string.Join(Environment.NewLine, result.Models);
+            StatusText = $"{result.Source}：已填入 {result.Models.Count} 个模型。可编辑后添加（最多 256 个）。";
+        }
+        catch (OperationCanceledException) when (query.IsCancellationRequested) { }
+        catch (Exception ex) { if (!query.IsCancellationRequested) { ErrorText = _services.Secrets.Redact(ex.Message); StatusText = "模型列表未更改。"; } }
+        finally { _modelQuery = null; IsBusy = false; }
     }
 
     [RelayCommand(CanExecute = nameof(CanOpenBrowser))]
@@ -335,6 +365,7 @@ public sealed partial class AddAccountViewModel : ObservableObject, IAsyncDispos
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
+        _modelQuery?.Cancel();
         ApiKey = string.Empty;
         await CancelAuthorizationAsync();
     }
